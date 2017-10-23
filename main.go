@@ -8,18 +8,8 @@ import (
 )
 
 func main() {
-	username := os.Getenv("INSTAGRAM_USERNAME")
-	password := os.Getenv("INSTAGRAM_PASSWORD")
 
-	if len(username) * len(password) == 0 {
-		panic("No Instagram username and/or password provided.")
-	}
-
-	insta := goinsta.New(username, password)
-
-	if err := insta.Login(); err != nil {
-		panic(err)
-	}
+	insta := login()
 
 	if len(os.Args) == 1 {
 		panic("Please provide a photo path.")
@@ -31,6 +21,24 @@ func main() {
 	upload(insta, photoFile, photoCaption)
 
 	defer insta.Logout()
+}
+
+func login() * goinsta.Instagram {
+	username := os.Getenv("INSTAGRAM_USERNAME")
+	password := os.Getenv("INSTAGRAM_PASSWORD")
+
+	if len(username) * len(password) == 0 {
+		panic("No Instagram username and/or password provided.")
+	}
+
+	insta := goinsta.New(username, password)
+
+
+	if err := insta.Login(); err != nil {
+		panic(err)
+	}
+
+	return insta
 }
 
 func upload(insta * goinsta.Instagram, path string, caption string) response.UploadPhotoResponse {
