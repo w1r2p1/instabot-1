@@ -26,7 +26,7 @@ func main() {
 	}
 
 	photoFile := os.Args[1]
-	photoCaption := "TODO #hashtags"
+	photoCaption := "TODO #hashtags" // TODO: proper hash tags from Vision API
 
 	upload(insta, photoFile, photoCaption)
 
@@ -38,13 +38,13 @@ func upload(insta * goinsta.Instagram, path string, caption string) response.Upl
 	uploadId := insta.NewUploadID()
 	filterType := goinsta.Filter_Normat
 
-	response, err := insta.UploadPhoto(path, caption, uploadId, quality, filterType)
+	uploadPhotoResponse, err := insta.UploadPhoto(path, caption, uploadId, quality, filterType)
 
 	if err != nil {
 		panic(err)
 	}
 
-	fmt.Printf("Upload status:%s MediaID: %s", response.Status, response.Media.ID)
+	fmt.Printf("Upload status:%s MediaID: %s", uploadPhotoResponse.Status, uploadPhotoResponse.Media.ID)
 
-	return response
+	return uploadPhotoResponse
 }
