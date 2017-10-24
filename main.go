@@ -19,7 +19,15 @@ func main() {
 	photoCaption := "TODO #hashtags" // TODO: proper hash tags from Vision API
 
 	upload(insta, photoFileReader, photoCaption)
-
+	/* TODO: turn off commenting
+	to do that i'll need to add media/configure route
+	[here](github.com/ahmdrz/goinsta/goinsta.go:841)
+	and to be sure i need to root my phone or use an
+	emulator to get instagram running through charles
+	[proxy](http://eliasbagley.github.io/reverseengineering/2016/12/02/reverse-engineering-instagram-api.html)
+	for some inspiration could be found in js version
+	of [this api](https://github.com/huttarichard/instagram-private-api/blob/4f2c33dc177ac12ac555af4cfb9db15d98e882f2/client/v1/media.js#L215)
+	*/
 	defer photoFileReader.Close()
 	defer insta.Logout()
 }
