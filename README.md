@@ -49,3 +49,13 @@ The program expects no parameters, just set environment variables correctly. It 
 $ instabot
 ````
 After running the program sits there and listens for incoming updates from telegram.
+
+### Docker
+For convenience a simple `Dockerfile` is provided. Using it one can build a container:
+````bash
+$ docker build -t instabot .
+````
+And then run it like so:
+````bash
+$ docker run -e INSTAGRAM_USERNAME=username -e INSTAGRAM_PASSWORD=passw0rd -e TELEGRAM_BOT_TOKEN=123456789:FSw4TQw4gwaRARDfasdfaW$R@qrh9jhu -e GOOGLE_APPLICATION_CREDENTIALS=/path/to/service/account/file.json instabot
+````
