@@ -19,19 +19,27 @@ import (
 
 func main() {
 
-	insta := login()
+	insta := loginInstagram()
+
+	// TODO: add telegram bot api
+	// TODO: start as a server to listen for updates as a telegram webhook
 
 	resp := getPhoto()
 	photoCaption := getHashtags(resp)
 
 	uploadPhotoResponse := upload(insta, resp.Body, photoCaption)
-	_, err := insta.DisableComments(uploadPhotoResponse.Media.ID)
-	if err != nil {
-		panic(fmt.Sprintf("Error trying to disable comments for mediaId %s: %s", uploadPhotoResponse.Media.ID, err))
-	}
+	disableComments(insta, uploadPhotoResponse)
 
 	defer resp.Body.Close()
 	defer insta.Logout()
+}
+
+func disableComments(insta *goinsta.Instagram, uploadPhotoResponse response.UploadPhotoResponse) {
+	_, err := insta.DisableComments(uploadPhotoResponse.Media.ID)
+
+	if err != nil {
+		panic(fmt.Sprintf("Error trying to disable comments for mediaId %s: %s", uploadPhotoResponse.Media.ID, err))
+	}
 }
 
 func getHashtags(resp * http.Response) string {
@@ -95,7 +103,7 @@ func getPhoto() * http.Response {
 	return resp
 }
 
-func login() * goinsta.Instagram {
+func loginInstagram() * goinsta.Instagram {
 	username := os.Getenv("INSTAGRAM_USERNAME")
 	password := os.Getenv("INSTAGRAM_PASSWORD")
 
