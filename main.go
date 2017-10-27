@@ -11,20 +11,22 @@ import (
 	"strings"
 	"context"
 
-	"github.com/nuxdie/goinsta"
+	"github.com/ahmdrz/goinsta"
 	"github.com/ahmdrz/goinsta/response"
 
 	vision "cloud.google.com/go/vision/apiv1"
+
+	"gopkg.in/telegram-bot-api.v4"
 )
 
 func main() {
+	startTelegramBotServer()
+}
 
+func getFileAndUpload(uri string) response.UploadPhotoResponse {
 	insta := loginInstagram()
 
-	// TODO: add telegram bot api
-	// TODO: start as a server to listen for updates as a telegram webhook
-
-	resp := getPhoto()
+	resp := getPhoto(uri)
 	photoCaption := getHashtags(resp)
 
 	uploadPhotoResponse := upload(insta, resp.Body, photoCaption)
@@ -32,6 +34,100 @@ func main() {
 
 	defer resp.Body.Close()
 	defer insta.Logout()
+
+	return uploadPhotoResponse
+}
+
+func startTelegramBotServer() * tgbotapi.BotAPI {
+	botToken := os.Getenv("TELEGRAM_BOT_TOKEN")
+	botDebug := os.Getenv("DEBUG_TELEGRAM_BOT")
+
+	if len(botToken) == 0 {
+		panic("Please provide a valid Telegram Bot token")
+	}
+
+	bot, err := tgbotapi.NewBotAPI(botToken)
+
+	if err != nil {
+		panic(fmt.Sprintf("Couldn't create Telegram bot using token '%s': %s", botToken, err))
+	}
+
+	bot.Debug = bool(len(botDebug) != 0)
+
+	webhookEnabled := os.Getenv("WEBHOOK_MODE")
+
+	if len(webhookEnabled) != 0 {
+		setWebhook(bot)
+	} else {
+		longPollUpdates(bot)
+	}
+
+	return bot
+}
+
+func longPollUpdates(bot * tgbotapi.BotAPI) {
+	u := tgbotapi.NewUpdate(0) // get last updates from offset 0
+	u.Timeout = 60
+
+	updates, err := bot.GetUpdatesChan(u)
+
+	if err != nil {
+		panic(fmt.Sprintf("Couldn't get updates from chan %s: %s", u, err))
+	}
+
+	for update := range updates {
+		handleUpdate(bot, update)
+	}
+}
+
+func setWebhook(bot * tgbotapi.BotAPI) {
+	// TODO this needs to be battle-tested!
+	webhookUrl := os.Getenv("SERVER_BASE_URL")
+	certfile := os.Getenv("CERT_FILE")
+
+	if len(webhookUrl) * len(certfile) == 0 {
+		panic(fmt.Sprintf("Please provide valid webhook url '%s' and certfile '%s'", webhookUrl, certfile))
+	}
+
+	_, err := bot.SetWebhook(tgbotapi.NewWebhookWithCert(webhookUrl, certfile))
+
+	if err != nil {
+		panic(fmt.Sprintf("Unable to set webhook url '%s' for bot: %s", webhookUrl, err))
+	}
+
+	updates := bot.ListenForWebhook("/")
+
+	keyfile := os.Getenv("KEY_FILE")
+
+	if len(keyfile) == 0 {
+		panic("Please provide valid keyfile")
+	}
+
+	go http.ListenAndServeTLS("0.0.0.0:8433", certfile, keyfile, nil)
+
+	for update := range updates {
+		handleUpdate(bot, update)
+	}
+}
+
+func handleUpdate(bot * tgbotapi.BotAPI, update tgbotapi.Update) {
+	photos := * update.Message.Photo
+	lastPhoto := photos[len(photos) -1] // get the biggest possible photo size
+	photoId := lastPhoto.FileID
+
+	photo, err := bot.GetFile(tgbotapi.FileConfig{FileID: photoId})
+
+	if err != nil {
+		panic(fmt.Sprintf("Couldn't get file url by id '%s': %s", photoId, err))
+	}
+
+	photoUrl := "https://api.telegram.org/file/bot" + bot.Token + "/" + photo.FilePath
+	uploadPhotoResponse := getFileAndUpload(photoUrl)
+
+	responseMessage := fmt.Sprintf("Upload status:%s MediaID: %s", uploadPhotoResponse.Status, uploadPhotoResponse.Media.ID)
+	msg := tgbotapi.NewMessage(update.Message.Chat.ID, responseMessage)
+
+	bot.Send(msg)
 }
 
 func disableComments(insta *goinsta.Instagram, uploadPhotoResponse response.UploadPhotoResponse) {
@@ -82,12 +178,11 @@ func getHashtags(resp * http.Response) string {
 	return res
 }
 
-func getPhoto() * http.Response {
-	if len(os.Args) == 1 {
+func getPhoto(uri string) * http.Response {
+	if len(uri) == 0 {
 		panic("Please provide a photo url.")
 	}
 
-	uri := os.Args[1]
 	parsed, err := url.Parse(uri)
 
 	if parsed.Host == "" || err != nil {
@@ -131,8 +226,6 @@ func upload(insta * goinsta.Instagram, photo io.ReadCloser, caption string) resp
 	if err != nil {
 		panic(fmt.Sprintf("Couldn't upload photo to instagram: %s", err))
 	}
-
-	fmt.Printf("Upload status:%s MediaID: %s", uploadPhotoResponse.Status, uploadPhotoResponse.Media.ID)
 
 	return uploadPhotoResponse
 }
