@@ -28,7 +28,7 @@ func getFileAndUpload(uri string) response.UploadPhotoResponse {
 
 	resp := getPhoto(uri)
 	photoCaption := getHashtags(resp)
-
+	// TODO stylize photo using github.com/nuxdie/fast-style-transfer
 	uploadPhotoResponse := upload(insta, resp.Body, photoCaption)
 	disableComments(insta, uploadPhotoResponse)
 
@@ -219,7 +219,7 @@ func loginInstagram() * goinsta.Instagram {
 func upload(insta * goinsta.Instagram, photo io.ReadCloser, caption string) response.UploadPhotoResponse {
 	quality := 87
 	uploadId := insta.NewUploadID()
-	filterType := goinsta.Filter_Normat
+	filterType := goinsta.Filter_Valencia // TODO select filter randomly or based on some scoring
 
 	uploadPhotoResponse, err := insta.UploadPhotoFromReader(photo, caption, uploadId, quality, filterType)
 
