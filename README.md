@@ -52,6 +52,8 @@ After running the program sits there and listens for incoming updates from teleg
 
 ### Docker
 For convenience a simple `Dockerfile` is provided. Using it one can build a container:
+_NOTE: Before building a container don't forget to place all necessary file(s) inside the folder,
+such as keys, certs, JSONs._
 ````bash
 $ docker build -t instabot .
 ````
