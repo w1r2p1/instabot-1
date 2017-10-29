@@ -43,6 +43,13 @@ $ openssl req -x509 -newkey rsa:2048 -keyout key.pem -out cert.pem -days 3560 -s
 ````
  or use ones from LetsEncrypt
 
+### Style transfer
+in order to get image stylized, use [this server](https://github.com/nuxdie/fast-style-transfer)
+ as a reference implementation:
+````bash
+STYLE_SERVER_URL=https://example.com/upload
+````
+
 ## Running
 The program expects no parameters, just set environment variables correctly. It could be run like so:
 ````bash

@@ -10,6 +10,9 @@ import (
 	"net/http"
 	"strings"
 	"context"
+	"mime/multipart"
+	"math/rand"
+	"time"
 
 	"github.com/ahmdrz/goinsta"
 	"github.com/ahmdrz/goinsta/response"
@@ -28,14 +31,75 @@ func getFileAndUpload(uri string) response.UploadPhotoResponse {
 
 	resp := getPhoto(uri)
 	photoCaption := getHashtags(resp)
-	// TODO stylize photo using github.com/nuxdie/fast-style-transfer
-	uploadPhotoResponse := upload(insta, resp.Body, photoCaption)
+	filter := randomFilter()
+	styledPhoto := stylize(resp, filter)
+	uploadPhotoResponse := upload(insta, styledPhoto.Body, photoCaption)
 	disableComments(insta, uploadPhotoResponse)
 
 	defer resp.Body.Close()
 	defer insta.Logout()
 
 	return uploadPhotoResponse
+}
+
+func randomFilter() string {
+	rand.Seed(time.Now().Unix())
+	filters := []string{
+		"la_muse",
+		"rain_princess",
+		"scream",
+		"udnie",
+		"wave",
+		"wreck",
+	}
+	i := rand.Int() % len(filters)
+	return filters[i]
+}
+
+func stylize(resp * http.Response, filter string) * http.Response {
+		styleApiUri := os.Getenv("STYLE_SERVER_URL")
+
+		if len(styleApiUri) == 0 {
+			panic("Please provide style API uri")
+		}
+
+		var postData bytes.Buffer
+		w := multipart.NewWriter(&postData)
+		fw, err := w.CreateFormFile("file", "file.jpg")
+
+		if err != nil {
+			panic(fmt.Sprintf("Couldn't create form file %s", err))
+		}
+
+		if _, err = io.Copy(fw, resp.Body); err != nil {
+			panic(fmt.Sprintf("Couldn't copy file to form dest %s", err))
+		}
+
+		if fw, err = w.CreateFormField("filter"); err != nil {
+			panic(fmt.Sprintf("Couldn't create a filter field on form data", err))
+		}
+
+		if _, err = fw.Write([]byte(filter)); err != nil {
+			panic(fmt.Sprintf("Couldn't write filter to field on form data", err))
+		}
+
+		w.Close() // So the terminating boundary would be there in place
+
+		req, err := http.NewRequest("POST", styleApiUri, &postData)
+
+		if err != nil {
+			panic(fmt.Sprintf("Couldn't create a new http request"))
+		}
+		// setting correct headars to calculate the post body boundary
+		req.Header.Set("Content-Type", w.FormDataContentType())
+
+		client := &http.Client{}
+		res, err := client.Do(req)
+		if err != nil {
+			panic(fmt.Sprintf("Error while doing a request %s: %s", req, res))
+		}
+
+		return res
 }
 
 func startTelegramBotServer() * tgbotapi.BotAPI {
