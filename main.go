@@ -283,7 +283,11 @@ func loginInstagram() * goinsta.Instagram {
 func upload(insta * goinsta.Instagram, photo io.ReadCloser, caption string) response.UploadPhotoResponse {
 	quality := 87
 	uploadId := insta.NewUploadID()
-	filterType := goinsta.Filter_Valencia // TODO select filter randomly or based on some scoring
+	/* TODO select filter based on some scoring
+	for example take this approach from MIT MemNet:
+	http://memorability.csail.mit.edu/download.html
+	*/
+	filterType := goinsta.Filter_Valencia
 
 	uploadPhotoResponse, err := insta.UploadPhotoFromReader(photo, caption, uploadId, quality, filterType)
 
