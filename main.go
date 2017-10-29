@@ -60,6 +60,7 @@ func randomFilter() string {
 		"udnie",
 		"wave",
 		"wreck",
+		"dora_marr",
 	}
 	i := rand.Int() % len(filters)
 	return filters[i]
