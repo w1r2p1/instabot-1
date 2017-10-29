@@ -26,18 +26,27 @@ func main() {
 	startTelegramBotServer()
 }
 
-func getFileAndUpload(uri string) response.UploadPhotoResponse {
+func getFileAndUpload(uri string, bot * tgbotapi.BotAPI, update tgbotapi.Update) response.UploadPhotoResponse {
 	insta := loginInstagram()
+	bot.Send(tgbotapi.NewMessage(update.Message.Chat.ID, "[INFO] logged in to Instagram"))
 
 	resp := getPhoto(uri)
+	bot.Send(tgbotapi.NewMessage(update.Message.Chat.ID, fmt.Sprintf("[INFO] got photo from uri: %s", uri)))
 	photoCaption := getHashtags(resp)
+	bot.Send(tgbotapi.NewMessage(update.Message.Chat.ID, fmt.Sprintf("[INFO] synthesized caption: %s", photoCaption)))
 	filter := randomFilter()
+	bot.Send(tgbotapi.NewMessage(update.Message.Chat.ID, fmt.Sprintf("[INFO] picked up filter: %s", filter)))
 	styledPhoto := stylize(resp, filter)
+	bot.Send(tgbotapi.NewMessage(update.Message.Chat.ID, fmt.Sprintf("[INFO] applied style transfer")))
 	uploadPhotoResponse := upload(insta, styledPhoto.Body, photoCaption)
+	bot.Send(tgbotapi.NewMessage(update.Message.Chat.ID, fmt.Sprintf("[INFO] uploaded to Instagram")))
 	disableComments(insta, uploadPhotoResponse)
+	bot.Send(tgbotapi.NewMessage(update.Message.Chat.ID, fmt.Sprintf("[INFO] disabled comments")))
 
+	defer styledPhoto.Body.Close()
 	defer resp.Body.Close()
 	defer insta.Logout()
+	bot.Send(tgbotapi.NewMessage(update.Message.Chat.ID, fmt.Sprintf("[INFO] logged out from Instagram")))
 
 	return uploadPhotoResponse
 }
@@ -186,9 +195,9 @@ func handleUpdate(bot * tgbotapi.BotAPI, update tgbotapi.Update) {
 	}
 
 	photoUrl := "https://api.telegram.org/file/bot" + bot.Token + "/" + photo.FilePath
-	uploadPhotoResponse := getFileAndUpload(photoUrl)
+	uploadPhotoResponse := getFileAndUpload(photoUrl, bot, update)
 
-	responseMessage := fmt.Sprintf("Upload status:%s MediaID: %s", uploadPhotoResponse.Status, uploadPhotoResponse.Media.ID)
+	responseMessage := fmt.Sprintf("Done! Upload status: %s", uploadPhotoResponse.Status)
 	msg := tgbotapi.NewMessage(update.Message.Chat.ID, responseMessage)
 
 	bot.Send(msg)
