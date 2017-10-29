@@ -28,30 +28,36 @@ func main() {
 
 func getFileAndUpload(uri string, bot * tgbotapi.BotAPI, update tgbotapi.Update) response.UploadPhotoResponse {
 	insta := loginInstagram()
-	bot.Send(tgbotapi.NewMessage(update.Message.Chat.ID, "[INFO] logged in to Instagram"))
+	bot.Send(tgbotapi.NewMessage(update.Message.Chat.ID, "ℹ️ logged in to Instagram"))
 
 	resp := getPhoto(uri)
-	bot.Send(tgbotapi.NewMessage(update.Message.Chat.ID, fmt.Sprintf("[INFO] got photo from uri: %s", uri)))
+	bot.Send(tgbotapi.NewMessage(update.Message.Chat.ID, fmt.Sprintf("ℹ️ got photo from uri: %s", uri)))
+	// TODO parse and use geotags from photo
+	// TODO use AI analysis to create a meaningful photo description https://deepai.org/ai-text-processing
 	photoCaption := getHashtags(resp)
-	bot.Send(tgbotapi.NewMessage(update.Message.Chat.ID, fmt.Sprintf("[INFO] synthesized caption: %s", photoCaption)))
+	bot.Send(tgbotapi.NewMessage(update.Message.Chat.ID, fmt.Sprintf("ℹ️ synthesized caption: %s", photoCaption)))
 	filter := randomFilter()
-	bot.Send(tgbotapi.NewMessage(update.Message.Chat.ID, fmt.Sprintf("[INFO] picked up filter: %s", filter)))
+	bot.Send(tgbotapi.NewMessage(update.Message.Chat.ID, fmt.Sprintf("ℹ️ picked up filter: %s", filter)))
 	styledPhoto := stylize(resp, filter)
-	bot.Send(tgbotapi.NewMessage(update.Message.Chat.ID, fmt.Sprintf("[INFO] applied style transfer")))
+	bot.Send(tgbotapi.NewMessage(update.Message.Chat.ID, fmt.Sprintf("ℹ️ applied style transfer")))
 	uploadPhotoResponse := upload(insta, styledPhoto.Body, photoCaption)
-	bot.Send(tgbotapi.NewMessage(update.Message.Chat.ID, fmt.Sprintf("[INFO] uploaded to Instagram")))
+	bot.Send(tgbotapi.NewMessage(update.Message.Chat.ID, fmt.Sprintf("ℹ️ uploaded to Instagram")))
 	disableComments(insta, uploadPhotoResponse)
-	bot.Send(tgbotapi.NewMessage(update.Message.Chat.ID, fmt.Sprintf("[INFO] disabled comments")))
+	bot.Send(tgbotapi.NewMessage(update.Message.Chat.ID, fmt.Sprintf("ℹ️ disabled comments")))
 
 	defer styledPhoto.Body.Close()
 	defer resp.Body.Close()
 	defer insta.Logout()
-	bot.Send(tgbotapi.NewMessage(update.Message.Chat.ID, fmt.Sprintf("[INFO] logged out from Instagram")))
+	bot.Send(tgbotapi.NewMessage(update.Message.Chat.ID, fmt.Sprintf("ℹ️ logged out from Instagram")))
 
 	return uploadPhotoResponse
 }
 
 func randomFilter() string {
+	/* TODO select style filter based on some scoring
+	for example take this approach from MIT MemNet:
+	http://memorability.csail.mit.edu/download.html
+	*/
 	rand.Seed(time.Now().Unix())
 	filters := []string{
 		"la_muse",
@@ -198,7 +204,7 @@ func handleUpdate(bot * tgbotapi.BotAPI, update tgbotapi.Update) {
 	photoUrl := "https://api.telegram.org/file/bot" + bot.Token + "/" + photo.FilePath
 	uploadPhotoResponse := getFileAndUpload(photoUrl, bot, update)
 
-	responseMessage := fmt.Sprintf("Done! Upload status: %s", uploadPhotoResponse.Status)
+	responseMessage := fmt.Sprintf("✅ Upload status: %s", uploadPhotoResponse.Status)
 	msg := tgbotapi.NewMessage(update.Message.Chat.ID, responseMessage)
 
 	bot.Send(msg)
@@ -293,10 +299,6 @@ func loginInstagram() * goinsta.Instagram {
 func upload(insta * goinsta.Instagram, photo io.ReadCloser, caption string) response.UploadPhotoResponse {
 	quality := 87
 	uploadId := insta.NewUploadID()
-	/* TODO select filter based on some scoring
-	for example take this approach from MIT MemNet:
-	http://memorability.csail.mit.edu/download.html
-	*/
 	filterType := goinsta.Filter_Valencia
 
 	uploadPhotoResponse, err := insta.UploadPhotoFromReader(photo, caption, uploadId, quality, filterType)
