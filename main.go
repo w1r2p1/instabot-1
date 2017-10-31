@@ -11,6 +11,7 @@ import (
 	"strings"
 	"context"
 	"mime/multipart"
+	"encoding/json"
 	"math/rand"
 	"time"
 
@@ -32,25 +33,101 @@ func getFileAndUpload(uri string, bot * tgbotapi.BotAPI, update tgbotapi.Update)
 
 	resp := getPhoto(uri)
 	bot.Send(tgbotapi.NewMessage(update.Message.Chat.ID, fmt.Sprintf("ℹ️ got photo from uri: %s", uri)))
+
 	// TODO parse and use geotags from photo
-	// TODO use AI analysis to create a meaningful photo description https://deepai.org/ai-text-processing
-	photoCaption := getHashtags(resp)
-	bot.Send(tgbotapi.NewMessage(update.Message.Chat.ID, fmt.Sprintf("ℹ️ synthesized caption: %s", photoCaption)))
+
+	photoCaption := getCaption(resp)
+	bot.Send(tgbotapi.NewMessage(update.Message.Chat.ID, fmt.Sprintf("ℹ️ raw photo caption: %s", photoCaption)))
+
+	photoHashtags := getHashtags(resp)
+	bot.Send(tgbotapi.NewMessage(update.Message.Chat.ID, fmt.Sprintf("ℹ️ synthesized hashtags: %s", photoHashtags)))
+
+	finalCaption := mergeCaptions(photoCaption, photoHashtags)
+	bot.Send(tgbotapi.NewMessage(update.Message.Chat.ID, fmt.Sprintf("ℹ️ the final caption would be like: %s", finalCaption)))
+
 	filter := randomFilter()
 	bot.Send(tgbotapi.NewMessage(update.Message.Chat.ID, fmt.Sprintf("ℹ️ picked up filter: %s", filter)))
+
 	styledPhoto := stylize(resp, filter)
 	bot.Send(tgbotapi.NewMessage(update.Message.Chat.ID, fmt.Sprintf("ℹ️ applied style transfer")))
-	uploadPhotoResponse := upload(insta, styledPhoto.Body, photoCaption)
+
+	uploadPhotoResponse := upload(insta, styledPhoto.Body, finalCaption)
 	bot.Send(tgbotapi.NewMessage(update.Message.Chat.ID, fmt.Sprintf("ℹ️ uploaded to Instagram")))
+
 	disableComments(insta, uploadPhotoResponse)
 	bot.Send(tgbotapi.NewMessage(update.Message.Chat.ID, fmt.Sprintf("ℹ️ disabled comments")))
 
 	defer styledPhoto.Body.Close()
 	defer resp.Body.Close()
 	defer insta.Logout()
+
 	bot.Send(tgbotapi.NewMessage(update.Message.Chat.ID, fmt.Sprintf("ℹ️ logged out from Instagram")))
 
 	return uploadPhotoResponse
+}
+
+func mergeCaptions(caption string, hashtags string) string {
+	return caption + ".\n.\n.\n" + hashtags
+}
+
+func getCaption(resp * http.Response) string {
+	captionApiUrl := os.Getenv("CAPTION_API_URL")
+	captionApiKey := os.Getenv("CAPTION_API_KEY")
+
+	if len(captionApiUrl) * len(captionApiKey) == 0 {
+		panic(fmt.Sprintf("Please provide caption api url '%s' and key '%s'", captionApiUrl, captionApiKey))
+	}
+
+	b := bytes.NewBuffer(make([]byte, 0)) // temporary buffer
+	photo := io.TeeReader(resp.Body, b) // returns a reader that writes contents of resp.Body to b
+
+	var postData bytes.Buffer
+	w := multipart.NewWriter(&postData)
+	fw, err := w.CreateFormFile("image", "file.jpg")
+
+	if err != nil {
+		panic(fmt.Sprintf("Couldn't create form file %s", err))
+	}
+
+	if _, err = io.Copy(fw, photo); err != nil {
+		panic(fmt.Sprintf("Couldn't copy file to form dest %s", err))
+	}
+
+	w.Close() // So the terminating boundary would be there in place
+
+	req, err := http.NewRequest("POST", captionApiUrl, &postData)
+
+	if err != nil {
+		panic(fmt.Sprintf("Couldn't create a new http request"))
+	}
+
+	// setting correct headers to calculate the post body boundary
+	req.Header.Set("Content-Type", w.FormDataContentType())
+	req.Header.Set("Api-Key", captionApiKey)
+
+	client := &http.Client{}
+	res, err := client.Do(req)
+	if err != nil {
+		panic(fmt.Sprintf("Error while doing a request %s: %s", req, res))
+	}
+
+	type CaptionApiResponse struct {
+		Output string
+		Job_id int
+	}
+
+	var captionResponse CaptionApiResponse
+
+	err = json.NewDecoder(res.Body).Decode(&captionResponse)
+
+	if err != nil {
+		panic(fmt.Sprintf("Couldn't parse json response %s", err))
+	}
+
+	defer resp.Body.Close() // we're done w/ resp.Body
+	resp.Body = ioutil.NopCloser(b) // returns a ReadCloser w/ no-op Close
+
+	return captionResponse.Output
 }
 
 func randomFilter() string {
@@ -106,7 +183,7 @@ func stylize(resp * http.Response, filter string) * http.Response {
 		if err != nil {
 			panic(fmt.Sprintf("Couldn't create a new http request"))
 		}
-		// setting correct headars to calculate the post body boundary
+		// setting correct headers to calculate the post body boundary
 		req.Header.Set("Content-Type", w.FormDataContentType())
 
 		client := &http.Client{}

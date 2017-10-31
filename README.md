@@ -50,6 +50,13 @@ in order to get image stylized, use [this server](https://github.com/nuxdie/fast
 STYLE_SERVER_URL=https://example.com/upload
 ````
 
+### Photo caption
+to get a nice caption for the photo, use something like [deepai API](https://deepai.org/machine-learning-model/neuraltalk)
+````bash
+CAPTION_API_URL=https://api.deepai.org/api/neuraltalk
+CAPTION_API_KEY=fffffff-0123-4567-8901-fffffffffffff
+````
+
 ## Running
 The program expects no parameters, just set environment variables correctly. It could be run like so:
 ````bash
