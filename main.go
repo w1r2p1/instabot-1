@@ -39,10 +39,13 @@ func getFileAndUpload(uri string, bot * tgbotapi.BotAPI, update tgbotapi.Update)
 	photoCaption := getCaption(resp)
 	bot.Send(tgbotapi.NewMessage(update.Message.Chat.ID, fmt.Sprintf("ℹ️ raw photo caption: %s", photoCaption)))
 
+	captionEmoji := getEmoji(photoCaption)
+	bot.Send(tgbotapi.NewMessage(update.Message.Chat.ID, fmt.Sprintf("ℹ️ got some emojis from caption: %s", captionEmoji)))
+
 	photoHashtags := getHashtags(resp)
 	bot.Send(tgbotapi.NewMessage(update.Message.Chat.ID, fmt.Sprintf("ℹ️ synthesized hashtags: %s", photoHashtags)))
 
-	finalCaption := mergeCaptions(photoCaption, photoHashtags)
+	finalCaption := mergeCaptions(photoCaption, captionEmoji, photoHashtags)
 	bot.Send(tgbotapi.NewMessage(update.Message.Chat.ID, fmt.Sprintf("ℹ️ the final caption would be like: %s", finalCaption)))
 
 	filter := randomFilter()
@@ -66,8 +69,30 @@ func getFileAndUpload(uri string, bot * tgbotapi.BotAPI, update tgbotapi.Update)
 	return uploadPhotoResponse
 }
 
-func mergeCaptions(caption string, hashtags string) string {
-	return caption + ".\n.\n.\n" + hashtags
+func getEmoji(text string) string {
+	emojiApiUrl := os.Getenv("EMOJI_API_URL")
+
+	if len(emojiApiUrl) == 0 {
+		panic("Please provide a valid emoji api url")
+	}
+
+	reqUrl := emojiApiUrl + "?text=" + url.QueryEscape(text)
+	res, err := http.Get(reqUrl)
+
+	if err != nil || res.StatusCode != 200 {
+		panic(fmt.Sprintf("Error while doing a request: %s, %s", err, res))
+	}
+
+	emojis, err := ioutil.ReadAll(res.Body)
+	if err != nil {
+		panic(fmt.Sprintf("Couldn't read response: %s", err))
+	}
+
+	return string(emojis)
+}
+
+func mergeCaptions(caption string, emoji string, hashtags string) string {
+	return caption + emoji + "\n.\n.\n.\n" + hashtags
 }
 
 func getCaption(resp * http.Response) string {

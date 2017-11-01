@@ -1,8 +1,8 @@
 # InstaBot
 ## Project goal
 The aim of this project is to build a telegram bot, that accepts an image as a file or photo and uploads it to
-Instagram. It also adds appropriate hashtags and geotags based on image data. Video and gallery support could be added at
-later stages of the project.
+Instagram. It also adds appropriate hashtags and geotags based on image data. Video and gallery support could be added
+at later stages of the project.
 
 ## Setup
 In order to get things working user needs to provide these environment variables:
@@ -55,6 +55,12 @@ to get a nice caption for the photo, use something like [deepai API](https://dee
 ````bash
 CAPTION_API_URL=https://api.deepai.org/api/neuraltalk
 CAPTION_API_KEY=fffffff-0123-4567-8901-fffffffffffff
+````
+
+### Emoji
+to have a nice emoji icons in photo caption, use something like [this serverless API](https://github.com/nuxdie/emojify)
+````bash
+EMOJI_API_URL=https://wt-01234567890-0.sandbox.auth0-extend.com/emojify
 ````
 
 ## Running
