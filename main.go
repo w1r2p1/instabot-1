@@ -223,26 +223,6 @@ func stylize(resp * http.Response, filter string) * http.Response {
 		return res
 }
 
-func handleUpdate(bot * tgbotapi.BotAPI, update tgbotapi.Update) {
-	photos := * update.Message.Photo
-	lastPhoto := photos[len(photos) -1] // get the biggest possible photo size
-	photoId := lastPhoto.FileID
-
-	photo, err := bot.GetFile(tgbotapi.FileConfig{FileID: photoId})
-
-	if err != nil {
-		panic(fmt.Sprintf("Couldn't get file url by id '%s': %s", photoId, err))
-	}
-
-	photoUrl := "https://api.telegram.org/file/bot" + bot.Token + "/" + photo.FilePath
-	uploadPhotoResponse := getFileAndUpload(photoUrl, bot, update)
-
-	responseMessage := fmt.Sprintf("✅ Upload status: %s", uploadPhotoResponse.Status)
-	msg := tgbotapi.NewMessage(update.Message.Chat.ID, responseMessage)
-
-	bot.Send(msg)
-}
-
 func disableComments(insta *goinsta.Instagram, uploadPhotoResponse response.UploadPhotoResponse) {
 	_, err := insta.DisableComments(uploadPhotoResponse.Media.ID)
 
