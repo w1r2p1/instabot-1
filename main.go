@@ -21,10 +21,13 @@ import (
 	vision "cloud.google.com/go/vision/apiv1"
 
 	"gopkg.in/telegram-bot-api.v4"
+
+	"./telegram"
 )
 
 func main() {
-	startTelegramBotServer()
+	tgserver := telegram.NewServer()
+	tgserver.Start()
 }
 
 func getFileAndUpload(uri string, bot * tgbotapi.BotAPI, update tgbotapi.Update) response.UploadPhotoResponse {
@@ -218,78 +221,6 @@ func stylize(resp * http.Response, filter string) * http.Response {
 		}
 
 		return res
-}
-
-func startTelegramBotServer() * tgbotapi.BotAPI {
-	botToken := os.Getenv("TELEGRAM_BOT_TOKEN")
-	botDebug := os.Getenv("DEBUG_TELEGRAM_BOT")
-
-	if len(botToken) == 0 {
-		panic("Please provide a valid Telegram Bot token")
-	}
-
-	bot, err := tgbotapi.NewBotAPI(botToken)
-
-	if err != nil {
-		panic(fmt.Sprintf("Couldn't create Telegram bot using token '%s': %s", botToken, err))
-	}
-
-	bot.Debug = bool(len(botDebug) != 0)
-
-	webhookEnabled := os.Getenv("WEBHOOK_MODE")
-
-	if len(webhookEnabled) != 0 {
-		setWebhook(bot)
-	} else {
-		longPollUpdates(bot)
-	}
-
-	return bot
-}
-
-func longPollUpdates(bot * tgbotapi.BotAPI) {
-	u := tgbotapi.NewUpdate(0) // get last updates from offset 0
-	u.Timeout = 60
-
-	updates, err := bot.GetUpdatesChan(u)
-
-	if err != nil {
-		panic(fmt.Sprintf("Couldn't get updates from chan %s: %s", u, err))
-	}
-
-	for update := range updates {
-		handleUpdate(bot, update)
-	}
-}
-
-func setWebhook(bot * tgbotapi.BotAPI) {
-	// TODO this needs to be battle-tested!
-	webhookUrl := os.Getenv("SERVER_BASE_URL")
-	certfile := os.Getenv("CERT_FILE")
-
-	if len(webhookUrl) * len(certfile) == 0 {
-		panic(fmt.Sprintf("Please provide valid webhook url '%s' and certfile '%s'", webhookUrl, certfile))
-	}
-
-	_, err := bot.SetWebhook(tgbotapi.NewWebhookWithCert(webhookUrl, certfile))
-
-	if err != nil {
-		panic(fmt.Sprintf("Unable to set webhook url '%s' for bot: %s", webhookUrl, err))
-	}
-
-	updates := bot.ListenForWebhook("/")
-
-	keyfile := os.Getenv("KEY_FILE")
-
-	if len(keyfile) == 0 {
-		panic("Please provide valid keyfile")
-	}
-
-	go http.ListenAndServeTLS("0.0.0.0:8433", certfile, keyfile, nil)
-
-	for update := range updates {
-		handleUpdate(bot, update)
-	}
 }
 
 func handleUpdate(bot * tgbotapi.BotAPI, update tgbotapi.Update) {
