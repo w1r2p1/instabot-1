@@ -37,5 +37,8 @@
   },
   "all_fields_ready": {
     "other": "Hey, it looks like everything's ready for publish: {{.Info}}"
+  },
+  "published": {
+    "other": "✅ Done! You can see your photo here: {{.Url}}"
   }
 }

@@ -45,16 +45,17 @@ type chatConfig struct {
 }
 
 type PhotoMetadata struct {
-	ChatId    int64  `json:"chat_id"    mapstructure:"chat_id"`
-	PhotoUrl  string `json:"photo_url"  mapstructure:"photo_url"`
-	Caption   string `json:"caption"    mapstructure:"caption"`
-	CaptionRu string `json:"caption_ru" mapstructure:"caption_ru"`
-	Hashtag   string `json:"hashtag"    mapstructure:"hashtag"`
-	HashtagRu string `json:"hashtag_ru" mapstructure:"hashtag_ru"`
-	StyledUrl string `json:"styled_url" mapstructure:"styled_url"`
-	Published bool   `json:"published"  mapstructure:"published"`
-	PhotoId   string `json:"photo_id"   mapstructure:"photo_id"`
-	Publish   bool   `json:"publish"    mapstructure:"publish"`
+	PhotoId      string `json:"photo_id"      mapstructure:"photo_id"`
+	ChatId       int64  `json:"chat_id"       mapstructure:"chat_id"`
+	PhotoUrl     string `json:"photo_url"     mapstructure:"photo_url"`
+	Caption      string `json:"caption"       mapstructure:"caption"`
+	CaptionRu    string `json:"caption_ru"    mapstructure:"caption_ru"`
+	Hashtag      string `json:"hashtag"       mapstructure:"hashtag"`
+	HashtagRu    string `json:"hashtag_ru"    mapstructure:"hashtag_ru"`
+	StyledUrl    string `json:"styled_url"    mapstructure:"styled_url"`
+	Publish      bool   `json:"publish"       mapstructure:"publish"`
+	Published    bool   `json:"published"     mapstructure:"published"`
+	PublishedUrl string `json:"published_url" mapstructure:"published_url"`
 }
 
 const envTelegramBotToken = "TELEGRAM_BOT_TOKEN"
@@ -242,37 +243,49 @@ func (server Server) handleRedis(message *redis.Message) {
 
 func (server Server) checkIfReady(metadata PhotoMetadata) {
 	log.Printf("[INFO] cheking metadata from redis: %v", metadata)
+
 	if len(metadata.Hashtag) != 0 &&
-		len(metadata.Caption) != 0 &&
-		metadata.Publish == false {
-			_, err := server.redis.HSet(metadata.PhotoId, "publish", true).Result()
+	len(metadata.Caption) != 0 &&
+	metadata.Publish == false &&
+	metadata.Published == false {
+		_, err := server.redis.HSet(metadata.PhotoId, "publish", true).Result()
 
-			if err != nil {
-				log.Printf("[ERROR] Couldn't set photo %s for publishing: %s",
-					metadata.PhotoId, err)
-				return
-			}
+		if err != nil {
+			log.Printf("[ERROR] Couldn't set photo %s for publishing: %s",
+				metadata.PhotoId, err)
+			return
+		}
 
-			metadata.Publish = true
+		metadata.Publish = true
 
-			meta, err := json.Marshal(&metadata)
+		meta, err := json.Marshal(&metadata)
 
-			if err != nil {
-				log.Printf("[ERROR] Couldn't encode JSON: %s", err)
-			}
-			_, err = server.redis.Publish(server.config.redis.channel, meta).Result()
+		if err != nil {
+			log.Printf("[ERROR] Couldn't encode JSON: %s", err)
+		}
+		_, err = server.redis.Publish(server.config.redis.channel, meta).Result()
 
-			if err != nil {
-				log.Printf("[ERROR] Couldn't publish photo metadata to redis channel: %s",
-					server.config.redis.channel, err)
-			}
+		if err != nil {
+			log.Printf("[ERROR] Couldn't publish photo metadata to redis channel: %s",
+				server.config.redis.channel, err)
+		}
 
-			info := metadata.Caption + "\n.\n.\n.\n" + metadata.Hashtag
-			msg := tgbotapi.NewMessage(metadata.ChatId, server.t(metadata.ChatId,
-					"all_fields_ready", struct {
-					Info string
-				}{Info: info}))
-			server.bot.Send(msg)
+		info := metadata.Caption + "\n.\n.\n.\n" + metadata.Hashtag
+		msg := tgbotapi.NewMessage(metadata.ChatId, server.t(metadata.ChatId,
+				"all_fields_ready", struct {
+				Info string
+			}{Info: info}))
+		server.bot.Send(msg)
+		return
+	}
+
+	if metadata.Published {
+		log.Printf("[INFO] Published %s.", metadata.PhotoId)
+		msg := tgbotapi.NewMessage(metadata.ChatId, server.t(metadata.ChatId,
+			"published", struct {
+				Url string
+			}{Url: metadata.PublishedUrl}))
+		server.bot.Send(msg)
 	}
 }
 
@@ -495,4 +508,9 @@ func (server Server) t(chatId int64, translationID string, args ...interface{}) 
 	}
 
 	return tFunc(translationID, args...)
+}
+
+// TODO we should use this function in order to generate finalCaption for upload to instagram
+func mergeCaptions(caption string, emoji string, hashtags string) string {
+	return caption + emoji + "\n.\n.\n.\n" + hashtags
 }

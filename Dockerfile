@@ -1,3 +1,5 @@
+# TODO rewrite for docker compose
+
 FROM golang
 
 WORKDIR /go/src/app

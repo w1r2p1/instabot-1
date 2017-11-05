@@ -1,18 +1,17 @@
 package main
-
+//TODO implement this package as caption
+/*
 import (
 	"bytes"
-	"context"
 	"encoding/json"
+	"errors"
 	"io"
-	"io/ioutil"
 	"log"
+	"mime/multipart"
 	"net/http"
 	"net/url"
-	"strings"
 	"time"
 
-	"cloud.google.com/go/vision/apiv1"
 	"github.com/go-redis/redis"
 	"github.com/mitchellh/mapstructure"
 	"github.com/spf13/viper"
@@ -22,6 +21,8 @@ const envWorkerRedisAddr = "WORKER_REDIS_ADDR"
 const envWorkerRedisDb = "WORKER_REDIS_DB"
 const envWorkerRedisPasswd = "WORKER_REDIS_PASSWD"
 const envWorkerRedisChannel = "WORKER_REDIS_CHANNEL"
+const envWorkerCaptionApiUrl = "WORKER_CAPTION_URL"
+const envWorkerCaptionApiKey = "WORKER_CAPTION_KEY"
 
 type Worker struct {
 	redis *redis.Client
@@ -29,6 +30,10 @@ type Worker struct {
 }
 
 type workerConfig struct {
+	captionApi struct{
+		url string
+		key string
+	}
 	redis struct{
 		channel string
 		addr string
@@ -51,6 +56,12 @@ type PhotoMetadata struct {
 	PublishedUrl string `json:"published_url" mapstructure:"published_url"`
 }
 
+type CaptionApiResponse struct {
+	Output string
+	Job_id int
+	Err string
+}
+
 func main() {
 	worker := NewWorker()
 	worker.Start()
@@ -60,6 +71,10 @@ func NewWorker() *Worker {
 	var worker Worker
 
 	worker.config = config()
+
+	if len(worker.config.captionApi.key) == 0 {
+		log.Fatal("[FATAL] Couldn't create worker due to laking caption api key")
+	}
 
 	worker.redis = redis.NewClient(&redis.Options{
 		Addr: worker.config.redis.addr,
@@ -78,12 +93,16 @@ func (worker Worker) Start() {
 
 func config() *workerConfig {
 	viper.AutomaticEnv()
+	viper.SetDefault(envWorkerCaptionApiUrl, "https://api.deepai.org/api/neuraltalk")
 	viper.SetDefault(envWorkerRedisAddr, "localhost:6379")
 	viper.SetDefault(envWorkerRedisPasswd, "")
 	viper.SetDefault(envWorkerRedisChannel, "queue")
 	viper.SetDefault(envWorkerRedisDb, 0)
 
 	conf := &workerConfig{}
+
+	conf.captionApi.url = viper.GetString(envWorkerCaptionApiUrl)
+	conf.captionApi.key = viper.GetString(envWorkerCaptionApiKey)
 
 	conf.redis.addr = viper.GetString(envWorkerRedisAddr)
 	conf.redis.passwd = viper.GetString(envWorkerRedisPasswd)
@@ -135,7 +154,7 @@ func (worker Worker) handleRedis(message *redis.Message) {
 
 	log.Printf("[DEBUG] Got metadata from message %v", updateMsg)
 
-	if len(updateMsg.Hashtag) == 0 {
+	if len(updateMsg.Caption) == 0 {
 		res, err := worker.redis.HGetAll(updateMsg.PhotoId).Result()
 
 		if err != nil {
@@ -154,9 +173,9 @@ func (worker Worker) handleRedis(message *redis.Message) {
 
 		log.Printf("[DEBUG] got metadata from redis: %v", metaFromRedis)
 
-		if len(metaFromRedis.Hashtag) != 0 {
-			log.Printf("[INFO] Nothing to do. Already has hashtag: %s",
-				metaFromRedis.Hashtag)
+		if len(metaFromRedis.Caption) != 0 {
+			log.Printf("[INFO] Nothing to do. Already has caption: %s",
+				metaFromRedis.Caption)
 
 			meta, err := json.Marshal(&metaFromRedis)
 
@@ -171,20 +190,19 @@ func (worker Worker) handleRedis(message *redis.Message) {
 			}
 			return
 		}
-
-		hashtag, err := worker.process(metaFromRedis)
+		caption, err := worker.process(metaFromRedis)
 
 		if err != nil {
-			log.Printf("[ERROR] Couldn't get hashtag from API: %s", err)
+			log.Printf("[ERROR] Couldn't get caption from API: %s", err)
 			return
 		}
 
-		metaFromRedis.Hashtag = hashtag
+		metaFromRedis.Caption = caption
 
-		_, err = worker.redis.HSet(updateMsg.PhotoId, "hashtag", hashtag).Result()
+		_, err = worker.redis.HSet(updateMsg.PhotoId, "caption", caption).Result()
 
 		if err != nil {
-			log.Printf("[ERROR] Couldn't set hashtag in redis for %s: %s",
+			log.Printf("[ERROR] Couldn't set caption in redis for %s: %s",
 				updateMsg.PhotoId, err)
 		}
 
@@ -203,70 +221,100 @@ func (worker Worker) handleRedis(message *redis.Message) {
 }
 
 func (worker Worker) process(metadata PhotoMetadata) (string, error) {
-	resp, err := getPhoto(metadata.PhotoUrl)
+	var postData bytes.Buffer
+
+	resp := getPhoto(metadata.PhotoUrl)
+
+	w := multipart.NewWriter(&postData)
+
+	fw, err := w.CreateFormFile("image", "file.jpg")
 
 	if err != nil {
-		log.Printf("[ERROR] Couldn't get photo: %s", err)
-		return "", err
+		log.Printf("[ERROR] Couldn't create image form field: %s", err)
 	}
 
-	ctx := context.Background()
-	client, err := vision.NewImageAnnotatorClient(ctx)
+	_, err = io.Copy(fw, resp.Body)
 
 	if err != nil {
-		log.Printf("[ERROR] Couldn't start Google Vision Image Annotator Client: %s", err)
-		return "", err
+		log.Printf("[ERROR] Couldn't write image to field: %s", err)
 	}
 
-	b := bytes.NewBuffer(make([]byte, 0)) // temporary buffer
-	photo := io.TeeReader(resp.Body, b) // returns a reader that writes contents of resp.Body to b
+	resp.Body.Close()
+	w.Close()
 
-	image, err := vision.NewImageFromReader(photo)
+	req, err := http.NewRequest("POST", worker.config.captionApi.url, &postData)
 
 	if err != nil {
-		log.Printf("[ERROR] Couldn't read photo: %s", err)
-		return "", err
+		log.Printf("[ERROR] Couldn't create http request: %s", err)
 	}
 
-	defer resp.Body.Close() // we're done w/ resp.Body
-	resp.Body = ioutil.NopCloser(b) // returns a ReadCloser w/ no-op Close
+	req.Header.Set("Content-Type", w.FormDataContentType())
+	req.Header.Set("Api-Key", worker.config.captionApi.key)
 
-	labels, err := client.DetectLabels(ctx, image, nil, 10)
+	client := &http.Client{}
+
+	res, err := client.Do(req)
 
 	if err != nil {
-		log.Printf("[ERROR] Couldn't detect image labels: %s", err)
-		return "", err
+		log.Printf("[ERROR] Couldn't make a request to caption api: %s", err)
 	}
 
-	defer ctx.Done()
+	var captionResponse CaptionApiResponse
 
-	res := ""
+	err = json.NewDecoder(res.Body).Decode(&captionResponse)
 
-	for _, label := range labels {
-		descr := label.Description
-		res += "#"
-		res += strings.Replace(descr, " ", "_", -1)
-		res += " "
+	if err != nil {
+		log.Printf("[ERROR] Couldn't read response from api: %s", err)
 	}
 
-	return res, nil
+	defer res.Body.Close()
+
+	var captionErr error
+
+	if len(captionResponse.Err) != 0 {
+		captionErr = errors.New(captionResponse.Err)
+	} else {
+		captionErr = nil
+	}
+
+	return captionResponse.Output, captionErr
 }
 
-
-func getPhoto(uri string) (*http.Response, error) {
+func getPhoto(uri string) * http.Response {
 	parsed, err := url.Parse(uri)
 
 	if parsed.Host == "" || err != nil {
-		log.Printf("[ERROR] Incorrect photo url %s provided: %s", uri, err)
-		return nil, err
+		log.Printf("[ERROR] Incorrect photo url provided: %s", uri)
 	}
 
 	resp, err := http.Get(uri)
 
 	if err != nil {
 		log.Printf("[ERROR] Could not get the photo by %s", uri)
-		return nil, err
 	}
 
-	return resp, nil
+	return resp
 }
+
+func getEmoji(text string) string {
+	emojiApiUrl := os.Getenv("EMOJI_API_URL")
+
+	if len(emojiApiUrl) == 0 {
+		panic("Please provide a valid emoji api url")
+	}
+
+	reqUrl := emojiApiUrl + "?text=" + url.QueryEscape(text)
+	res, err := http.Get(reqUrl)
+
+	if err != nil || res.StatusCode != 200 {
+		panic(fmt.Sprintf("Error while doing a request: %s, %s", err, res))
+	}
+
+	emojis, err := ioutil.ReadAll(res.Body)
+	if err != nil {
+		panic(fmt.Sprintf("Couldn't read response: %s", err))
+	}
+
+	return string(emojis)
+}
+*/

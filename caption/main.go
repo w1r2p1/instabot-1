@@ -42,16 +42,17 @@ type workerConfig struct {
 }
 
 type PhotoMetadata struct {
-	ChatId    int64  `json:"chat_id"    mapstructure:"chat_id"`
-	PhotoUrl  string `json:"photo_url"  mapstructure:"photo_url"`
-	Caption   string `json:"caption"    mapstructure:"caption"`
-	CaptionRu string `json:"caption_ru" mapstructure:"caption_ru"`
-	Hashtag   string `json:"hashtag"    mapstructure:"hashtag"`
-	HashtagRu string `json:"hashtag_ru" mapstructure:"hashtag_ru"`
-	StyledUrl string `json:"styled_url" mapstructure:"styled_url"`
-	Published bool   `json:"published"  mapstructure:"published"`
-	PhotoId   string `json:"photo_id"   mapstructure:"photo_id"`
-	Publish   bool   `json:"publish"    mapstructure:"publish"`
+	PhotoId      string `json:"photo_id"      mapstructure:"photo_id"`
+	ChatId       int64  `json:"chat_id"       mapstructure:"chat_id"`
+	PhotoUrl     string `json:"photo_url"     mapstructure:"photo_url"`
+	Caption      string `json:"caption"       mapstructure:"caption"`
+	CaptionRu    string `json:"caption_ru"    mapstructure:"caption_ru"`
+	Hashtag      string `json:"hashtag"       mapstructure:"hashtag"`
+	HashtagRu    string `json:"hashtag_ru"    mapstructure:"hashtag_ru"`
+	StyledUrl    string `json:"styled_url"    mapstructure:"styled_url"`
+	Publish      bool   `json:"publish"       mapstructure:"publish"`
+	Published    bool   `json:"published"     mapstructure:"published"`
+	PublishedUrl string `json:"published_url" mapstructure:"published_url"`
 }
 
 type CaptionApiResponse struct {
@@ -174,7 +175,6 @@ func (worker Worker) handleRedis(message *redis.Message) {
 		if len(metaFromRedis.Caption) != 0 {
 			log.Printf("[INFO] Nothing to do. Already has caption: %s",
 				metaFromRedis.Caption)
-
 
 			meta, err := json.Marshal(&metaFromRedis)
 
