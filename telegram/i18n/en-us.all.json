@@ -31,5 +31,11 @@
   },
   "publish_err": {
     "other": "🚫 Unfortunately something broke and I couldn't publish your photo.\nHere's what went wrong: {{.Error}}"
+  },
+  "caption_ready": {
+    "other": "Hey, it looks like this is the photo is all about: {{.Caption}}"
+  },
+  "all_fields_ready": {
+    "other": "Hey, it looks like everything's ready for publish: {{.Info}}"
   }
 }

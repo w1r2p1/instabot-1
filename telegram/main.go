@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/go-redis/redis"
+	"github.com/mitchellh/mapstructure"
 	"github.com/nicksnyder/go-i18n/i18n"
 	"github.com/spf13/viper"
 	"gopkg.in/telegram-bot-api.v4"
@@ -44,12 +45,16 @@ type chatConfig struct {
 }
 
 type PhotoMetadata struct {
-	ChatId		int64  `json:"chat_id"`
-	PhotoUrl  string `json:"photo_url"`
-	Caption   string `json:"caption"`
-	StyledUrl string `json:"styled_url"`
-	Published bool   `json:"published"`
-	PhotoId 	string `json:"photo_id"`
+	ChatId    int64  `json:"chat_id"    mapstructure:"chat_id"`
+	PhotoUrl  string `json:"photo_url"  mapstructure:"photo_url"`
+	Caption   string `json:"caption"    mapstructure:"caption"`
+	CaptionRu string `json:"caption_ru" mapstructure:"caption_ru"`
+	Hashtag   string `json:"hashtag"    mapstructure:"hashtag"`
+	HashtagRu string `json:"hashtag_ru" mapstructure:"hashtag_ru"`
+	StyledUrl string `json:"styled_url" mapstructure:"styled_url"`
+	Published bool   `json:"published"  mapstructure:"published"`
+	PhotoId   string `json:"photo_id"   mapstructure:"photo_id"`
+	Publish   bool   `json:"publish"    mapstructure:"publish"`
 }
 
 const envTelegramBotToken = "TELEGRAM_BOT_TOKEN"
@@ -115,11 +120,13 @@ func (server Server) redisSetup() {
 			server.config.redis.channel, err)
 	}
 
-	log.Printf("[DEBUG] subscribed to redis channel %s: %v",
+	log.Printf("[INFO] subscribed to redis channel %s: %v",
 		server.config.redis.channel, subscr)
 
 	for message := range ch {
-		go server.handleRedis(message)
+		go func(messageVal *redis.Message){
+			server.handleRedis(messageVal)
+		}(message)
 	}
 }
 
@@ -197,7 +204,9 @@ func (server *Server) Start() {
 	}
 
 	for update := range updates {
-		go server.handleUpdate(update)
+		go func (updateVal tgbotapi.Update) {
+			server.handleUpdate(updateVal)
+		}(update)
 	}
 }
 
@@ -205,14 +214,66 @@ func (server Server) handleRedis(message *redis.Message) {
 	log.Printf("[DEBUG] Got message from redis channel %s: %v",
 		server.config.redis.channel, message)
 
-	var metadata PhotoMetadata
-	err := json.Unmarshal([]byte(message.Payload), &metadata)
+	var updateMsg PhotoMetadata
+	err := json.Unmarshal([]byte(message.Payload), &updateMsg)
 
 	if err != nil {
 		log.Printf("[ERROR] Couldn't decode JSON metadata, %s", message.Payload)
 	}
 
-	log.Printf("[DEBUG] Got metadata from message %v", metadata)
+	res, err := server.redis.HGetAll(updateMsg.PhotoId).Result()
+
+	if err != nil {
+		log.Printf("[ERROR] Couldn't hget from redis for ID %s: %s",
+			updateMsg.PhotoId, err)
+	}
+	log.Printf("[DEBUG] Got from redis: %v", res)
+
+	var metaFromRedis PhotoMetadata
+	err = mapstructure.WeakDecode(res, &metaFromRedis)
+
+	if err != nil {
+		log.Printf("[ERROR] Couldn't map response from API to metadata struct: %s", err)
+		return
+	}
+
+	server.checkIfReady(metaFromRedis)
+}
+
+func (server Server) checkIfReady(metadata PhotoMetadata) {
+	log.Printf("[INFO] cheking metadata from redis: %v", metadata)
+	if len(metadata.Hashtag) != 0 &&
+		len(metadata.Caption) != 0 &&
+		metadata.Publish == false {
+			_, err := server.redis.HSet(metadata.PhotoId, "publish", true).Result()
+
+			if err != nil {
+				log.Printf("[ERROR] Couldn't set photo %s for publishing: %s",
+					metadata.PhotoId, err)
+				return
+			}
+
+			metadata.Publish = true
+
+			meta, err := json.Marshal(&metadata)
+
+			if err != nil {
+				log.Printf("[ERROR] Couldn't encode JSON: %s", err)
+			}
+			_, err = server.redis.Publish(server.config.redis.channel, meta).Result()
+
+			if err != nil {
+				log.Printf("[ERROR] Couldn't publish photo metadata to redis channel: %s",
+					server.config.redis.channel, err)
+			}
+
+			info := metadata.Caption + "\n.\n.\n.\n" + metadata.Hashtag
+			msg := tgbotapi.NewMessage(metadata.ChatId, server.t(metadata.ChatId,
+					"all_fields_ready", struct {
+					Info string
+				}{Info: info}))
+			server.bot.Send(msg)
+	}
 }
 
 func (server *Server) handleUpdate(update tgbotapi.Update) {
@@ -329,7 +390,7 @@ func (server *Server) handleDocument(update tgbotapi.Update) {
 	photoUrl := server.getFileLink(fileId)
 	log.Printf("[INFO] Got photo from Telegram: %s", photoUrl)
 
-	_, err := server.publishPhoto(update.Message.Chat.ID, fileId, photoUrl)
+	_, err := server.pushPhoto(update.Message.Chat.ID, fileId, photoUrl)
 
 	if err != nil {
 		log.Printf("[ERROR] Couldn't publish photo %s: %s", photoUrl, err)
@@ -349,7 +410,7 @@ func (server *Server) handlePhoto(update tgbotapi.Update) {
 
 	log.Printf("[INFO] Got photo from Telegram: %s", photoUrl)
 
-	_, err := server.publishPhoto(update.Message.Chat.ID, lastPhoto.FileID, photoUrl)
+	_, err := server.pushPhoto(update.Message.Chat.ID, lastPhoto.FileID, photoUrl)
 
 	if err != nil {
 		log.Printf("[ERROR] Couldn't publish photo %s: %s", photoUrl, err)
@@ -361,7 +422,7 @@ func (server *Server) handlePhoto(update tgbotapi.Update) {
 	}
 }
 
-func (server Server) publishPhoto(chatId int64, photoId, photoUrl string) (int64, error) {
+func (server Server) pushPhoto(chatId int64, photoId, photoUrl string) (int64, error) {
 	metadata, err := json.Marshal(&PhotoMetadata{
 		ChatId:chatId,
 		PhotoUrl:photoUrl,
@@ -384,6 +445,13 @@ func (server Server) publishPhoto(chatId int64, photoId, photoUrl string) (int64
 
 	if err != nil {
 		log.Printf("[ERROR] Couldn't hset field %s: %s", "chat_id", err)
+	}
+
+
+	_, err = server.redis.HSet(photoId, "photo_id", photoId).Result()
+
+	if err != nil {
+		log.Printf("[ERROR] Couldn't hset field %s: %s", "photo_id", err)
 	}
 
 	res, err := server.redis.Publish(server.config.redis.channel, metadata).Result()
@@ -413,6 +481,8 @@ func (server Server) setLocale(chatId int64, locale i18n.TranslateFunc) {
 	chatConf.locale = locale
 	log.Printf("[DEBUG] Set locale %v for chatId %v", locale, chatId)
 	server.config.chatConfig[chatId] = chatConf
+	// TODO store this in persistent storage
+	// TODO Make sure hashtags and caption are translated
 }
 
 func (server Server) t(chatId int64, translationID string, args ...interface{}) string {
