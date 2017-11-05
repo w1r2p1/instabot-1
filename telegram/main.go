@@ -1,17 +1,21 @@
-package telegram
+package main
 
 import (
-	"github.com/spf13/viper"
-	"gopkg.in/telegram-bot-api.v4"
+	"encoding/json"
 	"fmt"
 	"log"
-	"github.com/nicksnyder/go-i18n/i18n"
 	"os"
 	"time"
+
+	"github.com/go-redis/redis"
+	"github.com/nicksnyder/go-i18n/i18n"
+	"github.com/spf13/viper"
+	"gopkg.in/telegram-bot-api.v4"
 )
 
 type Server struct {
 	bot *tgbotapi.BotAPI
+	redis *redis.Client
 	config *serverConfig
 }
 
@@ -20,6 +24,12 @@ type serverConfig struct {
 	debug bool
 	timeout int
 	demoInstaURL string
+	redis struct{
+		addr string
+		passwd string
+		channel string
+		db int
+	}
 	sleep int // duration between messages in ms
 	chatConfig map[int64]chatConfig
 	translation struct{
@@ -33,13 +43,29 @@ type chatConfig struct {
 	photoCount int
 }
 
-type publishSuccess string
+type PhotoMetadata struct {
+	ChatId		int64  `json:"chat_id"`
+	PhotoUrl  string `json:"photo_url"`
+	Caption   string `json:"caption"`
+	StyledUrl string `json:"styled_url"`
+	Published bool   `json:"published"`
+	PhotoId 	string `json:"photo_id"`
+}
 
 const envTelegramBotToken = "TELEGRAM_BOT_TOKEN"
 const envTelegramBotSleep = "TELEGRAM_BOT_SLEEP"
 const envTelegramBotDebug = "TELEGRAM_BOT_DEBUG"
 const envTelegramDemoInstaURL = "TELEGRAM_DEMO_INSTA_URL"
 const envTelegramBotTimeout = "TELEGRAM_BOT_TIMEOUT"
+const envTelegramRedisAddr = "TELEGRAM_REDIS_ADDR"
+const envTelegramRedisPasswd = "TELEGRAM_REDIS_PASSWD"
+const envTelegramRedisChannel = "TELEGRAM_REDIS_CHANNEL"
+const envTelegramRedisDb = "TELEGRAM_REDIS_DB"
+
+func main() {
+	server := NewServer()
+	server.Start()
+}
 
 func NewServer() *Server {
 	var server Server
@@ -59,7 +85,42 @@ func NewServer() *Server {
 
 	server.bot = bot
 
+	server.redis = redis.NewClient(&redis.Options{
+		Addr: server.config.redis.addr,
+		Password: server.config.redis.passwd,
+		DB: server.config.redis.db,
+	})
+
+	go server.redisSetup()
+
 	return &server
+}
+
+func (server Server) redisSetup() {
+	pong, err := server.redis.Ping().Result()
+
+	if err != nil {
+		log.Printf("[ERROR] Couldn't ping redis server %s", err)
+	} else {
+		log.Printf("[DEBUG] got pong from redis %v", pong)
+	}
+
+	pubsub := server.redis.Subscribe(server.config.redis.channel)
+	ch := pubsub.Channel()
+
+	subscr, err := pubsub.ReceiveTimeout(time.Second*time.Duration(10))
+
+	if err != nil {
+		log.Printf("[ERROR] Couldn't subscribe to redis channel %s: %s",
+			server.config.redis.channel, err)
+	}
+
+	log.Printf("[DEBUG] subscribed to redis channel %s: %v",
+		server.config.redis.channel, subscr)
+
+	for message := range ch {
+		go server.handleRedis(message)
+	}
 }
 
 func i18nSetup() (i18n.TranslateFunc, i18n.TranslateFunc) {
@@ -92,6 +153,10 @@ func config() *serverConfig {
 	viper.SetDefault(envTelegramBotTimeout, 60)
 	viper.SetDefault(envTelegramBotSleep, 300)
 	viper.SetDefault(envTelegramDemoInstaURL, "https://instagram.com/nuxdie")
+	viper.SetDefault(envTelegramRedisAddr, "localhost:6379")
+	viper.SetDefault(envTelegramRedisPasswd, "")
+	viper.SetDefault(envTelegramRedisDb, 0)
+	viper.SetDefault(envTelegramRedisChannel, "queue")
 
 	if len(viper.GetString(envTelegramBotToken)) == 0 {
 		log.Fatal("[FATAL] Please provide a valid Telegram Bot token")
@@ -110,6 +175,11 @@ func config() *serverConfig {
 	conf.translation.en = t_en
 	conf.translation.ru = t_ru
 
+	conf.redis.addr = viper.GetString(envTelegramRedisAddr)
+	conf.redis.passwd = viper.GetString(envTelegramRedisPasswd)
+	conf.redis.channel = viper.GetString(envTelegramRedisChannel)
+	conf.redis.db = viper.GetInt(envTelegramRedisDb)
+
 	return conf
 }
 
@@ -127,8 +197,22 @@ func (server *Server) Start() {
 	}
 
 	for update := range updates {
-		server.handleUpdate(update)
+		go server.handleUpdate(update)
 	}
+}
+
+func (server Server) handleRedis(message *redis.Message) {
+	log.Printf("[DEBUG] Got message from redis channel %s: %v",
+		server.config.redis.channel, message)
+
+	var metadata PhotoMetadata
+	err := json.Unmarshal([]byte(message.Payload), &metadata)
+
+	if err != nil {
+		log.Printf("[ERROR] Couldn't decode JSON metadata, %s", message.Payload)
+	}
+
+	log.Printf("[DEBUG] Got metadata from message %v", metadata)
 }
 
 func (server *Server) handleUpdate(update tgbotapi.Update) {
@@ -245,7 +329,7 @@ func (server *Server) handleDocument(update tgbotapi.Update) {
 	photoUrl := server.getFileLink(fileId)
 	log.Printf("[INFO] Got photo from Telegram: %s", photoUrl)
 
-	_, err := server.publishPhoto(photoUrl)
+	_, err := server.publishPhoto(update.Message.Chat.ID, fileId, photoUrl)
 
 	if err != nil {
 		log.Printf("[ERROR] Couldn't publish photo %s: %s", photoUrl, err)
@@ -265,7 +349,7 @@ func (server *Server) handlePhoto(update tgbotapi.Update) {
 
 	log.Printf("[INFO] Got photo from Telegram: %s", photoUrl)
 
-	_, err := server.publishPhoto(photoUrl)
+	_, err := server.publishPhoto(update.Message.Chat.ID, lastPhoto.FileID, photoUrl)
 
 	if err != nil {
 		log.Printf("[ERROR] Couldn't publish photo %s: %s", photoUrl, err)
@@ -277,10 +361,40 @@ func (server *Server) handlePhoto(update tgbotapi.Update) {
 	}
 }
 
-func (server Server) publishPhoto(photoUrl string) (publishSuccess, error) {
-	//TODO put this update to some queue
+func (server Server) publishPhoto(chatId int64, photoId, photoUrl string) (int64, error) {
+	metadata, err := json.Marshal(&PhotoMetadata{
+		ChatId:chatId,
+		PhotoUrl:photoUrl,
+		PhotoId:photoId,
+	})
 
-	return "ok", nil
+	log.Printf("[DEBUG] JSON encoded metadata: %s", string(metadata))
+	if err != nil {
+		log.Printf("[ERROR] Couldn't encode photo metadata to JSON: %s", err)
+		return 0, err
+	}
+
+	_, err = server.redis.HSet(photoId, "photo_url", photoUrl).Result()
+
+	if err != nil {
+		log.Printf("[ERROR] Couldn't hset field %s: %s", "photo_url", err)
+	}
+
+	_, err = server.redis.HSet(photoId, "chat_id", chatId).Result()
+
+	if err != nil {
+		log.Printf("[ERROR] Couldn't hset field %s: %s", "chat_id", err)
+	}
+
+	res, err := server.redis.Publish(server.config.redis.channel, metadata).Result()
+
+	if err != nil {
+		log.Printf("[ERROR] Couldn't publish photo metadata to redis channel: %s",
+			server.config.redis.channel, err)
+		return 0, err
+	}
+
+	return res, nil
 }
 
 func (server *Server) getFileLink(fileId string) string {
