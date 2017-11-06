@@ -47,6 +47,7 @@ type PhotoMetadata struct {
 	ChatId       int64  `json:"chat_id"       mapstructure:"chat_id"`
 	PhotoUrl     string `json:"photo_url"     mapstructure:"photo_url"`
 	Caption      string `json:"caption"       mapstructure:"caption"`
+	FinalCaption string `json:"final_caption" mapstructure:"final_caption"`
 	CaptionRu    string `json:"caption_ru"    mapstructure:"caption_ru"`
 	Hashtag      string `json:"hashtag"       mapstructure:"hashtag"`
 	HashtagRu    string `json:"hashtag_ru"    mapstructure:"hashtag_ru"`
@@ -72,8 +73,6 @@ func NewWorker() *Worker {
 		DB: worker.config.redis.db,
 	})
 
-	worker.setupRedis()
-
 	insta, err := worker.loginInstagram()
 
 	if err != nil {
@@ -81,6 +80,8 @@ func NewWorker() *Worker {
 	}
 
 	worker.insta = *insta
+
+	worker.setupRedis()
 
 	return &worker
 }
@@ -123,6 +124,8 @@ func (worker Worker) setupRedis() {
 
 	subscr, err := pubsub.ReceiveTimeout(time.Second*time.Duration(10))
 
+	defer pubsub.Close()
+
 	if err != nil {
 		log.Fatalf("[ERROR] Couldn't subscribe to redis channel %s: %s",
 			worker.config.redis.channel, err)
@@ -164,7 +167,8 @@ func (worker Worker) handleRedis(message *redis.Message) {
 		err = mapstructure.WeakDecode(metaHGet, &metaFromRedis)
 
 		if err != nil {
-			log.Printf("[ERROR] Couldn't map response from API to metadata struct: %s", err)
+			log.Printf("[ERROR] Couldn't map response from API to metadata struct: %s",
+				err)
 			return
 		}
 
@@ -223,8 +227,7 @@ func (worker Worker) process(metadata PhotoMetadata) (string, error) {
 		return "", err
 	}
 
-	res, err := worker.upload(resp.Body,
-		metadata.Caption + "\n.\n.\n.\n.\n" + metadata.Hashtag)
+	res, err := worker.upload(resp.Body, metadata.FinalCaption)
 
 	if err != nil {
 		log.Printf("[ERROR] Couldn't upload photo %s to Instagram: %s",
@@ -236,6 +239,10 @@ func (worker Worker) process(metadata PhotoMetadata) (string, error) {
 }
 
 func (worker Worker) loginInstagram() (*goinsta.Instagram, error) {
+	if len(worker.config.instagram.username)*len(worker.config.instagram.password) == 0 {
+		log.Fatalf("[ERROR] Please provide valid instagram username and password")
+	}
+
 	insta := goinsta.New(worker.config.instagram.username, worker.config.instagram.password)
 
 	if err := insta.Login(); err != nil {
@@ -289,11 +296,13 @@ func (worker Worker) upload(photo io.ReadCloser, caption string) (
 	return uploadPhotoResponse, nil
 }
 
-func disableComments(insta *goinsta.Instagram, uploadPhotoResponse response.UploadPhotoResponse) {
+func disableComments(insta *goinsta.Instagram,
+	uploadPhotoResponse response.UploadPhotoResponse) {
 	// TODO use this functionality if config says so
 	_, err := insta.DisableComments(uploadPhotoResponse.Media.ID)
 
 	if err != nil {
-		panic(fmt.Sprintf("Error trying to disable comments for mediaId %s: %s", uploadPhotoResponse.Media.ID, err))
+		panic(fmt.Sprintf("Error trying to disable comments for mediaId %s: %s",
+			uploadPhotoResponse.Media.ID, err))
 	}
 }

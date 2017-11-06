@@ -3,7 +3,7 @@
     "other": "Hello, {{.Person}}!"
   },
   "wrong_file_type": {
-    "other": "Sorry I can only handle JPEG and PNG images at the moment. 😔 You sent me {{.Type}}."
+    "other": "Sorry I can only handle JPEG images at the moment. 😔 You sent me {{.Type}}."
   },
   "locale_ru": {
     "other": "From now on I'll speak in russian. \nKa-lin-ka, ma-lin-ka, ma-lin-ka mo-ya! 🇷🇺"

@@ -49,6 +49,7 @@ type PhotoMetadata struct {
 	ChatId       int64  `json:"chat_id"       mapstructure:"chat_id"`
 	PhotoUrl     string `json:"photo_url"     mapstructure:"photo_url"`
 	Caption      string `json:"caption"       mapstructure:"caption"`
+	FinalCaption string `json:"final_caption" mapstructure:"final_caption"`
 	CaptionRu    string `json:"caption_ru"    mapstructure:"caption_ru"`
 	Hashtag      string `json:"hashtag"       mapstructure:"hashtag"`
 	HashtagRu    string `json:"hashtag_ru"    mapstructure:"hashtag_ru"`
@@ -256,6 +257,18 @@ func (server Server) checkIfReady(metadata PhotoMetadata) {
 			return
 		}
 
+		info := server.mergeCaptions(metadata.Caption, metadata.Hashtag)
+
+		_, err = server.redis.HSet(metadata.PhotoId, "final_caption", info).Result()
+
+		if err != nil {
+			log.Printf("[ERROR] Couldn't set photo %s final_caption: %s",
+				metadata.PhotoId, err)
+			return
+		}
+
+		metadata.FinalCaption = info
+
 		metadata.Publish = true
 
 		meta, err := json.Marshal(&metadata)
@@ -270,7 +283,7 @@ func (server Server) checkIfReady(metadata PhotoMetadata) {
 				server.config.redis.channel, err)
 		}
 
-		info := metadata.Caption + "\n.\n.\n.\n" + metadata.Hashtag
+
 		msg := tgbotapi.NewMessage(metadata.ChatId, server.t(metadata.ChatId,
 				"all_fields_ready", struct {
 				Info string
@@ -389,7 +402,7 @@ func (server *Server) handleDocument(update tgbotapi.Update) {
 
 	log.Printf("[DEBUG] File type %s ID %s", fileType, fileId)
 
-	if fileType != "image/png" && fileType != "image/jpg" && fileType != "image/jpeg" {
+	if fileType != "image/jpg" && fileType != "image/jpeg" {
 		log.Printf("[WARN] Wrong file type %s received", fileType)
 
 		msg := tgbotapi.NewMessage(update.Message.Chat.ID,
@@ -510,7 +523,6 @@ func (server Server) t(chatId int64, translationID string, args ...interface{}) 
 	return tFunc(translationID, args...)
 }
 
-// TODO we should use this function in order to generate finalCaption for upload to instagram
-func mergeCaptions(caption string, emoji string, hashtags string) string {
-	return caption + emoji + "\n.\n.\n.\n" + hashtags
+func (server Server) mergeCaptions(caption string, hashtags string) string {
+	return caption + "\n.\n.\n.\n" + hashtags
 }
