@@ -1,0 +1,44 @@
+version: '3'
+
+services:
+
+  telegram:
+    build: ./telegram
+    depends_on:
+      - redis
+    restart: on-failure
+    environment:
+      TELEGRAM_REDIS_ADDR: redis:6379
+      TELEGRAM_BOT_TOKEN: #TODO
+
+  instagram:
+    build: ./instagram
+    depends_on:
+      - redis
+    restart: on-failure
+    environment:
+      WORKER_REDIS_ADDR: redis:6379
+      WORKER_INSTAGRAM_USERNAME: #TODO
+      WORKER_INSTAGRAM_PASSWORD: #TODO
+
+  caption:
+    build: ./caption
+    depends_on:
+      - redis
+    restart: on-failure
+    environment:
+      WORKER_REDIS_ADDR: redis:6379
+      WORKER_CAPTION_KEY: #TODO
+
+  hashtag:
+    build: ./hashtag
+    depends_on:
+      - redis
+    restart: on-failure
+    environment:
+      WORKER_REDIS_ADDR: redis:6379
+      GOOGLE_APPLICATION_CREDENTIALS: key.json
+
+  redis:
+    image: redis:3.2.11
+    restart: on-failure
