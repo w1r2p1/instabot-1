@@ -2,7 +2,6 @@ package main
 
 import (
 	"bytes"
-	"context"
 	"encoding/json"
 	"io"
 	"io/ioutil"
@@ -16,6 +15,7 @@ import (
 	"github.com/go-redis/redis"
 	"github.com/mitchellh/mapstructure"
 	"github.com/spf13/viper"
+	"golang.org/x/net/context"
 )
 
 const envWorkerRedisAddr = "WORKER_REDIS_ADDR"
