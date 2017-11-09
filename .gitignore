@@ -1,5 +1,6 @@
 .idea
 build
 key.json
-**/ca-certificates.crt
 .env
+!ca-certificates.crt
+**/ca-certificates.crt

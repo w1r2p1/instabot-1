@@ -15,8 +15,11 @@ import (
 	"github.com/mitchellh/mapstructure"
 	"github.com/spf13/viper"
 	"gitlab.com/nuxdie/instabot/metadata"
+	"github.com/hashicorp/logutils"
+	"os"
 )
 
+const envLogLevel = "LOG_LEVEL"
 const envWorkerRedisAddr = "WORKER_REDIS_ADDR"
 const envWorkerRedisDb = "WORKER_REDIS_DB"
 const envWorkerRedisPasswd = "WORKER_REDIS_PASSWD"
@@ -84,6 +87,14 @@ func config() *workerConfig {
 	viper.SetDefault(envWorkerRedisPasswd, "")
 	viper.SetDefault(envWorkerRedisChannel, "queue")
 	viper.SetDefault(envWorkerRedisDb, 0)
+	viper.SetDefault(envLogLevel, "WARN")
+
+	filter := &logutils.LevelFilter{
+		Levels: []logutils.LogLevel{"DEBUG", "INFO", "WARN", "ERROR", "FATAL"},
+		MinLevel: logutils.LogLevel(viper.GetString(envLogLevel)),
+		Writer: os.Stderr,
+	}
+	log.SetOutput(filter)
 
 	conf := &workerConfig{}
 

@@ -13,6 +13,8 @@ import (
 	"github.com/spf13/viper"
 	"gopkg.in/telegram-bot-api.v4"
 	"gitlab.com/nuxdie/instabot/metadata"
+	"github.com/hashicorp/logutils"
+	"strconv"
 )
 
 type Server struct {
@@ -26,6 +28,7 @@ type serverConfig struct {
 	debug bool
 	timeout int
 	demoInstaURL string
+	landingUrl string
 	redis struct{
 		addr string
 		passwd string
@@ -45,10 +48,12 @@ type chatConfig struct {
 	photoCount int
 }
 
+const envLogLevel = "LOG_LEVEL"
 const envTelegramBotToken = "TELEGRAM_BOT_TOKEN"
 const envTelegramBotSleep = "TELEGRAM_BOT_SLEEP"
 const envTelegramBotDebug = "TELEGRAM_BOT_DEBUG"
 const envTelegramDemoInstaURL = "TELEGRAM_DEMO_INSTA_URL"
+const envTelegramDemoLandingUrl = "TELEGRAM_DEMO_LANDING_URL"
 const envTelegramBotTimeout = "TELEGRAM_BOT_TIMEOUT"
 const envTelegramRedisAddr = "TELEGRAM_REDIS_ADDR"
 const envTelegramRedisPasswd = "TELEGRAM_REDIS_PASSWD"
@@ -104,7 +109,7 @@ func (server Server) redisSetup() {
 	subscr, err := pubsub.ReceiveTimeout(time.Second*time.Duration(10))
 
 	if err != nil {
-		log.Printf("[ERROR] Couldn't subscribe to redis channel %s: %s",
+		log.Fatalf("[ERROR] Couldn't subscribe to redis channel %s: %s",
 			server.config.redis.channel, err)
 	}
 
@@ -148,10 +153,19 @@ func config() *serverConfig {
 	viper.SetDefault(envTelegramBotTimeout, 60)
 	viper.SetDefault(envTelegramBotSleep, 300)
 	viper.SetDefault(envTelegramDemoInstaURL, "https://instagram.com/instabeat7374")
+	viper.SetDefault(envTelegramDemoLandingUrl, "https://instabeat.ml/?utm_source=telegram")
 	viper.SetDefault(envTelegramRedisAddr, "localhost:6379")
 	viper.SetDefault(envTelegramRedisPasswd, "")
 	viper.SetDefault(envTelegramRedisDb, 0)
 	viper.SetDefault(envTelegramRedisChannel, "queue")
+	viper.SetDefault(envLogLevel, "WARN")
+
+	filter := &logutils.LevelFilter{
+		Levels: []logutils.LogLevel{"DEBUG", "INFO", "WARN", "ERROR", "FATAL"},
+		MinLevel: logutils.LogLevel(viper.GetString(envLogLevel)),
+		Writer: os.Stderr,
+	}
+	log.SetOutput(filter)
 
 	if len(viper.GetString(envTelegramBotToken)) == 0 {
 		log.Fatal("[FATAL] Please provide a valid Telegram Bot token")
@@ -162,6 +176,7 @@ func config() *serverConfig {
 		debug: viper.GetBool(envTelegramBotDebug),
 		timeout: viper.GetInt(envTelegramBotTimeout),
 		demoInstaURL: viper.GetString(envTelegramDemoInstaURL),
+		landingUrl: viper.GetString(envTelegramDemoLandingUrl),
 		sleep: viper.GetInt(envTelegramBotSleep),
 		chatConfig: make(map[int64]chatConfig),
 	}
@@ -229,12 +244,16 @@ func (server Server) handleRedis(message *redis.Message) {
 }
 
 func (server Server) checkIfReady(photoMetadata metadata.PhotoMetadata) {
-	log.Printf("[INFO] cheking metadata from redis: %v", photoMetadata)
+	log.Printf("[DEBUG] cheking metadata from redis: %v", photoMetadata)
+	currentChatConfig := server.config.chatConfig[photoMetadata.ChatId]
 
 	if len(photoMetadata.Hashtag) != 0 &&
 	len(photoMetadata.Caption) != 0 &&
+	photoMetadata.NSFWChecked &&
+	!photoMetadata.NSFW &&
 	photoMetadata.Publish == false &&
-	photoMetadata.Published == false {
+	photoMetadata.Published == false &&
+	currentChatConfig.photoCount < 3 {
 		_, err := server.redis.HSet(photoMetadata.PhotoId, "publish", true).Result()
 
 		if err != nil {
@@ -269,7 +288,6 @@ func (server Server) checkIfReady(photoMetadata metadata.PhotoMetadata) {
 				server.config.redis.channel, err)
 		}
 
-
 		msg := tgbotapi.NewMessage(photoMetadata.ChatId, server.t(photoMetadata.ChatId,
 				"all_fields_ready", struct {
 				Info string
@@ -280,10 +298,26 @@ func (server Server) checkIfReady(photoMetadata metadata.PhotoMetadata) {
 
 	if photoMetadata.Published {
 		log.Printf("[INFO] Published %s.", photoMetadata.PhotoId)
+
+		if currentChatConfig.photoCount == 0 {
+			currentChatConfig.photoCount = 1
+		} else {
+			currentChatConfig.photoCount++
+		}
+		server.config.chatConfig[photoMetadata.ChatId] = currentChatConfig
+
 		msg := tgbotapi.NewMessage(photoMetadata.ChatId, server.t(photoMetadata.ChatId,
 			"published", struct {
 				Url string
 			}{Url: photoMetadata.PublishedUrl}))
+		server.bot.Send(msg)
+	}
+
+	if photoMetadata.NSFWChecked && photoMetadata.NSFW {
+		log.Printf("[INFO] NSFW detected %s! chatId: %s",
+			photoMetadata.PhotoId, photoMetadata.ChatId)
+		msg := tgbotapi.NewMessage(photoMetadata.ChatId, server.t(photoMetadata.ChatId,
+			"nsfw_detected"))
 		server.bot.Send(msg)
 	}
 }
@@ -296,12 +330,33 @@ func (server *Server) handleUpdate(update tgbotapi.Update) {
 		server.handleText(update)
 	}
 
-	if update.Message.Document != nil {
-		server.handleDocument(update)
-	}
+	if update.Message.Document != nil || update.Message.Photo != nil {
+		currentChatConfig := server.config.chatConfig[update.Message.Chat.ID]
 
-	if update.Message.Photo != nil {
-		server.handlePhoto(update)
+		if currentChatConfig.photoCount > 3 {
+			landingUrl := server.config.landingUrl+"&chat_id="+strconv.Itoa(int(update.Message.Chat.ID))
+
+			msg := tgbotapi.NewMessage(update.Message.Chat.ID,
+				server.t(update.Message.Chat.ID, "demo_end_1"))
+			server.bot.Send(msg)
+
+			time.Sleep(time.Millisecond * time.Duration(server.config.sleep))
+
+			msg = tgbotapi.NewMessage(update.Message.Chat.ID,
+				server.t(update.Message.Chat.ID, "demo_end_2", &struct {
+					LandingUrl string
+				}{LandingUrl: landingUrl}))
+			server.bot.Send(msg)
+			return
+		}
+
+		if update.Message.Document != nil {
+			server.handleDocument(update)
+		}
+
+		if update.Message.Photo != nil {
+			server.handlePhoto(update)
+		}
 	}
 }
 

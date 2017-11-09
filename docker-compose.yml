@@ -7,9 +7,10 @@ services:
     depends_on:
       - redis
       - instagram
+      - nsfw
       - caption
       - hashtag
-    restart: on-failure
+    restart: always
     environment:
       TELEGRAM_REDIS_ADDR: redis:6379
     env_file:
@@ -19,9 +20,10 @@ services:
     build: ./instagram
     depends_on:
       - redis
+      - nsfw
       - caption
       - hashtag
-    restart: on-failure
+    restart: always
     environment:
       WORKER_REDIS_ADDR: redis:6379
     env_file:
@@ -31,7 +33,17 @@ services:
     build: ./caption
     depends_on:
       - redis
-    restart: on-failure
+    restart: always
+    environment:
+      WORKER_REDIS_ADDR: redis:6379
+    env_file:
+      - .env
+
+  nsfw:
+    build: ./nsfw
+    depends_on:
+      - redis
+    restart: always
     environment:
       WORKER_REDIS_ADDR: redis:6379
     env_file:
@@ -41,11 +53,11 @@ services:
     build: ./hashtag
     depends_on:
       - redis
-    restart: on-failure
+    restart: always
     environment:
       WORKER_REDIS_ADDR: redis:6379
       GOOGLE_APPLICATION_CREDENTIALS: key.json
 
   redis:
     image: redis:3.2.11
-    restart: on-failure
+    restart: always

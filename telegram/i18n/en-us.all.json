@@ -40,5 +40,14 @@
   },
   "published": {
     "other": "✅ Done! You can see your photo here: {{.Url}}"
+  },
+  "nsfw_detected": {
+    "other": "Woopsie! 🤭 It looks like you've tried to publish something that should remain private. I won't post this as it's too mature for my demo account, 👯‍ sorry. Try a different photo, please! 😇"
+  },
+  "demo_end_1": {
+    "other": "Hey, I'm really sorry but you've already posted your free 3 photos."
+  },
+  "demo_end_2": {
+    "other": "If you'd like to post more, please see here on how to get more: {{.LandingUrl}}"
   }
 }

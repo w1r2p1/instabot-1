@@ -1,11 +1,11 @@
 #!/usr/bin/env bash
-for WORKER in telegram instagram caption hashtag
+for WORKER in telegram instagram caption hashtag nsfw
 do
   cd ${WORKER}
   echo ""
-  echo "Building ${WORKER}"
+  echo -e "\033[1;34m Compiling ${WORKER} \033[0m"
+  make
   cp ../ca-certificates.crt .
-  CGO_ENABLED=0 GOOS=linux go build -a -installsuffix cgo -v -o build/main .
   cd ..
 done
 

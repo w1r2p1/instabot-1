@@ -9,6 +9,7 @@ TELEGRAM_BOT_TOKEN=123456789:FSw4TQw4gwaRARDfasdfaW$R@qrh9jhu
 TELEGRAM_BOT_SLEEP=300
 TELEGRAM_BOT_DEBUG=false
 TELEGRAM_DEMO_INSTA_URL=https://instagram.com/nuxdie
+TELEGRAM_DEMO_LANDING_URL=https://instabeat.ml/?utm_source=telegram
 TELEGRAM_BOT_TIMEOUT=60
 ````
 
