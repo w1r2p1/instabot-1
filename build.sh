@@ -1,18 +1,12 @@
 #!/usr/bin/env bash
-pushd telegram
-CGO_ENABLED=0 GOOS=linux go build -a -installsuffix cgo -o main .
-popd
+for WORKER in telegram instagram caption hashtag
+do
+  cd ${WORKER}
+  echo ""
+  echo "Building ${WORKER}"
+  cp ../ca-certificates.crt .
+  CGO_ENABLED=0 GOOS=linux go build -a -installsuffix cgo -v -o build/main .
+  cd ..
+done
 
-pushd instagram
-CGO_ENABLED=0 GOOS=linux go build -a -installsuffix cgo -o main .
-popd
-
-pushd caption
-CGO_ENABLED=0 GOOS=linux go build -a -installsuffix cgo -o main .
-popd
-
-pushd hashtag
-CGO_ENABLED=0 GOOS=linux go build -a -installsuffix cgo -o main .
-popd
-
-docker-compose up --build
+cp key.json hashtag/

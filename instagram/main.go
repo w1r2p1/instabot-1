@@ -14,6 +14,7 @@ import (
 	"github.com/go-redis/redis"
 	"github.com/mitchellh/mapstructure"
 	"github.com/spf13/viper"
+	"gitlab.com/nuxdie/instabot/metadata"
 )
 
 const envWorkerRedisAddr = "WORKER_REDIS_ADDR"
@@ -40,21 +41,6 @@ type workerConfig struct {
 		passwd string
 		db int
 	}
-}
-
-type PhotoMetadata struct {
-	PhotoId      string `json:"photo_id"      mapstructure:"photo_id"`
-	ChatId       int64  `json:"chat_id"       mapstructure:"chat_id"`
-	PhotoUrl     string `json:"photo_url"     mapstructure:"photo_url"`
-	Caption      string `json:"caption"       mapstructure:"caption"`
-	FinalCaption string `json:"final_caption" mapstructure:"final_caption"`
-	CaptionRu    string `json:"caption_ru"    mapstructure:"caption_ru"`
-	Hashtag      string `json:"hashtag"       mapstructure:"hashtag"`
-	HashtagRu    string `json:"hashtag_ru"    mapstructure:"hashtag_ru"`
-	StyledUrl    string `json:"styled_url"    mapstructure:"styled_url"`
-	Publish      bool   `json:"publish"       mapstructure:"publish"`
-	Published    bool   `json:"published"     mapstructure:"published"`
-	PublishedUrl string `json:"published_url" mapstructure:"published_url"`
 }
 
 func main() {
@@ -145,7 +131,7 @@ func (worker Worker) handleRedis(message *redis.Message) {
 	log.Printf("[DEBUG] Got message from redis channel %s: %v",
 		worker.config.redis.channel, message)
 
-	var updateMsg PhotoMetadata
+	var updateMsg metadata.PhotoMetadata
 	err := json.Unmarshal([]byte(message.Payload), &updateMsg)
 
 	if err != nil {
@@ -163,7 +149,7 @@ func (worker Worker) handleRedis(message *redis.Message) {
 		}
 		log.Printf("[DEBUG] Got from redis: %v", metaHGet)
 
-		var metaFromRedis PhotoMetadata
+		var metaFromRedis metadata.PhotoMetadata
 		err = mapstructure.WeakDecode(metaHGet, &metaFromRedis)
 
 		if err != nil {
@@ -219,19 +205,19 @@ func (worker Worker) handleRedis(message *redis.Message) {
 	}
 }
 
-func (worker Worker) process(metadata PhotoMetadata) (string, error) {
-	resp, err := getPhoto(metadata.PhotoUrl)
+func (worker Worker) process(photoMetadata metadata.PhotoMetadata) (string, error) {
+	resp, err := getPhoto(photoMetadata.PhotoUrl)
 
 	if err != nil {
 		log.Printf("[ERROR] Couldn't get photo: %s", err)
 		return "", err
 	}
 
-	res, err := worker.upload(resp.Body, metadata.FinalCaption)
+	res, err := worker.upload(resp.Body, photoMetadata.FinalCaption)
 
 	if err != nil {
 		log.Printf("[ERROR] Couldn't upload photo %s to Instagram: %s",
-			metadata.PhotoId, err)
+			photoMetadata.PhotoId, err)
 		return "", err
 	}
 

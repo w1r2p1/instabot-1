@@ -12,6 +12,7 @@ import (
 	"github.com/nicksnyder/go-i18n/i18n"
 	"github.com/spf13/viper"
 	"gopkg.in/telegram-bot-api.v4"
+	"gitlab.com/nuxdie/instabot/metadata"
 )
 
 type Server struct {
@@ -42,21 +43,6 @@ type serverConfig struct {
 type chatConfig struct {
 	locale i18n.TranslateFunc
 	photoCount int
-}
-
-type PhotoMetadata struct {
-	PhotoId      string `json:"photo_id"      mapstructure:"photo_id"`
-	ChatId       int64  `json:"chat_id"       mapstructure:"chat_id"`
-	PhotoUrl     string `json:"photo_url"     mapstructure:"photo_url"`
-	Caption      string `json:"caption"       mapstructure:"caption"`
-	FinalCaption string `json:"final_caption" mapstructure:"final_caption"`
-	CaptionRu    string `json:"caption_ru"    mapstructure:"caption_ru"`
-	Hashtag      string `json:"hashtag"       mapstructure:"hashtag"`
-	HashtagRu    string `json:"hashtag_ru"    mapstructure:"hashtag_ru"`
-	StyledUrl    string `json:"styled_url"    mapstructure:"styled_url"`
-	Publish      bool   `json:"publish"       mapstructure:"publish"`
-	Published    bool   `json:"published"     mapstructure:"published"`
-	PublishedUrl string `json:"published_url" mapstructure:"published_url"`
 }
 
 const envTelegramBotToken = "TELEGRAM_BOT_TOKEN"
@@ -161,7 +147,7 @@ func config() *serverConfig {
 	viper.SetDefault(envTelegramBotDebug, false)
 	viper.SetDefault(envTelegramBotTimeout, 60)
 	viper.SetDefault(envTelegramBotSleep, 300)
-	viper.SetDefault(envTelegramDemoInstaURL, "https://instagram.com/nuxdie")
+	viper.SetDefault(envTelegramDemoInstaURL, "https://instagram.com/instabeat7374")
 	viper.SetDefault(envTelegramRedisAddr, "localhost:6379")
 	viper.SetDefault(envTelegramRedisPasswd, "")
 	viper.SetDefault(envTelegramRedisDb, 0)
@@ -216,7 +202,7 @@ func (server Server) handleRedis(message *redis.Message) {
 	log.Printf("[DEBUG] Got message from redis channel %s: %v",
 		server.config.redis.channel, message)
 
-	var updateMsg PhotoMetadata
+	var updateMsg metadata.PhotoMetadata
 	err := json.Unmarshal([]byte(message.Payload), &updateMsg)
 
 	if err != nil {
@@ -231,7 +217,7 @@ func (server Server) handleRedis(message *redis.Message) {
 	}
 	log.Printf("[DEBUG] Got from redis: %v", res)
 
-	var metaFromRedis PhotoMetadata
+	var metaFromRedis metadata.PhotoMetadata
 	err = mapstructure.WeakDecode(res, &metaFromRedis)
 
 	if err != nil {
@@ -242,36 +228,36 @@ func (server Server) handleRedis(message *redis.Message) {
 	server.checkIfReady(metaFromRedis)
 }
 
-func (server Server) checkIfReady(metadata PhotoMetadata) {
-	log.Printf("[INFO] cheking metadata from redis: %v", metadata)
+func (server Server) checkIfReady(photoMetadata metadata.PhotoMetadata) {
+	log.Printf("[INFO] cheking metadata from redis: %v", photoMetadata)
 
-	if len(metadata.Hashtag) != 0 &&
-	len(metadata.Caption) != 0 &&
-	metadata.Publish == false &&
-	metadata.Published == false {
-		_, err := server.redis.HSet(metadata.PhotoId, "publish", true).Result()
+	if len(photoMetadata.Hashtag) != 0 &&
+	len(photoMetadata.Caption) != 0 &&
+	photoMetadata.Publish == false &&
+	photoMetadata.Published == false {
+		_, err := server.redis.HSet(photoMetadata.PhotoId, "publish", true).Result()
 
 		if err != nil {
 			log.Printf("[ERROR] Couldn't set photo %s for publishing: %s",
-				metadata.PhotoId, err)
+				photoMetadata.PhotoId, err)
 			return
 		}
 
-		info := server.mergeCaptions(metadata.Caption, metadata.Hashtag)
+		info := server.mergeCaptions(photoMetadata.Caption, photoMetadata.Hashtag)
 
-		_, err = server.redis.HSet(metadata.PhotoId, "final_caption", info).Result()
+		_, err = server.redis.HSet(photoMetadata.PhotoId, "final_caption", info).Result()
 
 		if err != nil {
 			log.Printf("[ERROR] Couldn't set photo %s final_caption: %s",
-				metadata.PhotoId, err)
+				photoMetadata.PhotoId, err)
 			return
 		}
 
-		metadata.FinalCaption = info
+		photoMetadata.FinalCaption = info
 
-		metadata.Publish = true
+		photoMetadata.Publish = true
 
-		meta, err := json.Marshal(&metadata)
+		meta, err := json.Marshal(&photoMetadata)
 
 		if err != nil {
 			log.Printf("[ERROR] Couldn't encode JSON: %s", err)
@@ -284,7 +270,7 @@ func (server Server) checkIfReady(metadata PhotoMetadata) {
 		}
 
 
-		msg := tgbotapi.NewMessage(metadata.ChatId, server.t(metadata.ChatId,
+		msg := tgbotapi.NewMessage(photoMetadata.ChatId, server.t(photoMetadata.ChatId,
 				"all_fields_ready", struct {
 				Info string
 			}{Info: info}))
@@ -292,12 +278,12 @@ func (server Server) checkIfReady(metadata PhotoMetadata) {
 		return
 	}
 
-	if metadata.Published {
-		log.Printf("[INFO] Published %s.", metadata.PhotoId)
-		msg := tgbotapi.NewMessage(metadata.ChatId, server.t(metadata.ChatId,
+	if photoMetadata.Published {
+		log.Printf("[INFO] Published %s.", photoMetadata.PhotoId)
+		msg := tgbotapi.NewMessage(photoMetadata.ChatId, server.t(photoMetadata.ChatId,
 			"published", struct {
 				Url string
-			}{Url: metadata.PublishedUrl}))
+			}{Url: photoMetadata.PublishedUrl}))
 		server.bot.Send(msg)
 	}
 }
@@ -449,7 +435,7 @@ func (server *Server) handlePhoto(update tgbotapi.Update) {
 }
 
 func (server Server) pushPhoto(chatId int64, photoId, photoUrl string) (int64, error) {
-	metadata, err := json.Marshal(&PhotoMetadata{
+	metadata, err := json.Marshal(&metadata.PhotoMetadata{
 		ChatId:chatId,
 		PhotoUrl:photoUrl,
 		PhotoId:photoId,

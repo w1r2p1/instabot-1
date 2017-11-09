@@ -1,4 +1,4 @@
-version: '3'
+version: '2'
 
 services:
 
@@ -12,7 +12,8 @@ services:
     restart: on-failure
     environment:
       TELEGRAM_REDIS_ADDR: redis:6379
-      TELEGRAM_BOT_TOKEN: #TODO
+    env_file:
+      - .env
 
   instagram:
     build: ./instagram
@@ -23,8 +24,8 @@ services:
     restart: on-failure
     environment:
       WORKER_REDIS_ADDR: redis:6379
-      WORKER_INSTAGRAM_USERNAME: #TODO
-      WORKER_INSTAGRAM_PASSWORD: #TODO
+    env_file:
+      - .env
 
   caption:
     build: ./caption
@@ -33,7 +34,8 @@ services:
     restart: on-failure
     environment:
       WORKER_REDIS_ADDR: redis:6379
-      WORKER_CAPTION_KEY: #TODO
+    env_file:
+      - .env
 
   hashtag:
     build: ./hashtag

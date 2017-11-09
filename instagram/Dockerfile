@@ -1,4 +1,4 @@
 FROM scratch
-ADD main /
+ADD build/main /
 ADD ca-certificates.crt /etc/ssl/certs/
 CMD ["/main"]
