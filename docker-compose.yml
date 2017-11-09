@@ -6,6 +6,9 @@ services:
     build: ./telegram
     depends_on:
       - redis
+      - instagram
+      - caption
+      - hashtag
     restart: on-failure
     environment:
       TELEGRAM_REDIS_ADDR: redis:6379
@@ -15,6 +18,8 @@ services:
     build: ./instagram
     depends_on:
       - redis
+      - caption
+      - hashtag
     restart: on-failure
     environment:
       WORKER_REDIS_ADDR: redis:6379
