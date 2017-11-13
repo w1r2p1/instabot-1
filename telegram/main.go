@@ -15,12 +15,15 @@ import (
 	"gitlab.com/nuxdie/instabot/metadata"
 	"github.com/hashicorp/logutils"
 	"strconv"
+	"gopkg.in/mgo.v2"
+	"gopkg.in/mgo.v2/bson"
 )
 
 type Server struct {
 	bot *tgbotapi.BotAPI
 	redis *redis.Client
 	config *serverConfig
+	mongo *mgo.Session
 }
 
 type serverConfig struct {
@@ -29,6 +32,10 @@ type serverConfig struct {
 	timeout int
 	demoInstaURL string
 	landingUrl string
+	mongo struct{
+		url string
+		dbName string
+	}
 	redis struct{
 		addr string
 		passwd string
@@ -36,16 +43,15 @@ type serverConfig struct {
 		db int
 	}
 	sleep int // duration between messages in ms
-	chatConfig map[int64]chatConfig
-	translation struct{
-		en i18n.TranslateFunc
-		ru i18n.TranslateFunc
-	}
+	chatConfig map[int64]ChatConfig
+	translation map[string]i18n.TranslateFunc
 }
 
-type chatConfig struct {
-	locale i18n.TranslateFunc
-	photoCount int
+type ChatConfig struct {
+	ID bson.ObjectId `bson:"_id,omitempty"`
+	chatId int64 `bson:"chat_id"`
+	locale string `bson:"locale"`
+	photoCount int `bson:"photo_count"`
 }
 
 const envLogLevel = "LOG_LEVEL"
@@ -55,10 +61,14 @@ const envTelegramBotDebug = "TELEGRAM_BOT_DEBUG"
 const envTelegramDemoInstaURL = "TELEGRAM_DEMO_INSTA_URL"
 const envTelegramDemoLandingUrl = "TELEGRAM_DEMO_LANDING_URL"
 const envTelegramBotTimeout = "TELEGRAM_BOT_TIMEOUT"
+const envTelegramMongoUrl = "TELEGRAM_MONGO_URL"
+const envTelegramMongoDbName = "TELEGRAM_MONGO_DB_NAME"
 const envTelegramRedisAddr = "TELEGRAM_REDIS_ADDR"
 const envTelegramRedisPasswd = "TELEGRAM_REDIS_PASSWD"
 const envTelegramRedisChannel = "TELEGRAM_REDIS_CHANNEL"
 const envTelegramRedisDb = "TELEGRAM_REDIS_DB"
+
+const mongoSettingsCollectionName = "settings"
 
 func main() {
 	server := NewServer()
@@ -90,6 +100,7 @@ func NewServer() *Server {
 	})
 
 	go server.redisSetup()
+	go server.mongoConnect()
 
 	return &server
 }
@@ -133,18 +144,18 @@ func i18nSetup() (i18n.TranslateFunc, i18n.TranslateFunc) {
 	i18n.MustLoadTranslationFile(workDir + "/i18n/en-us.all.json")
 	i18n.MustLoadTranslationFile(workDir + "/i18n/ru-ru.all.json")
 
-	t_en, err := i18n.Tfunc("en-us")
+	tEn, err := i18n.Tfunc("en-us")
 
 	if err != nil {
 		log.Printf("[ERROR] Couldn't create translation function for lang %s", "en-us")
 	}
 
-	t_ru, err := i18n.Tfunc("ru-ru")
+	tRu, err := i18n.Tfunc("ru-ru")
 	if err != nil {
 		log.Printf("[ERROR] Couldn't create translation function for lang %s", "ru-ru")
 	}
 
-	return t_en, t_ru
+	return tEn, tRu
 }
 
 func config() *serverConfig {
@@ -154,6 +165,8 @@ func config() *serverConfig {
 	viper.SetDefault(envTelegramBotSleep, 300)
 	viper.SetDefault(envTelegramDemoInstaURL, "https://instagram.com/instabeat7374")
 	viper.SetDefault(envTelegramDemoLandingUrl, "https://instabeat.ml/?utm_source=telegram")
+	viper.SetDefault(envTelegramMongoUrl, "localhost")
+	viper.SetDefault(envTelegramMongoDbName, "instabot")
 	viper.SetDefault(envTelegramRedisAddr, "localhost:6379")
 	viper.SetDefault(envTelegramRedisPasswd, "")
 	viper.SetDefault(envTelegramRedisDb, 0)
@@ -178,17 +191,21 @@ func config() *serverConfig {
 		demoInstaURL: viper.GetString(envTelegramDemoInstaURL),
 		landingUrl: viper.GetString(envTelegramDemoLandingUrl),
 		sleep: viper.GetInt(envTelegramBotSleep),
-		chatConfig: make(map[int64]chatConfig),
+		chatConfig: make(map[int64]ChatConfig),
 	}
 
-	t_en, t_ru := i18nSetup()
-	conf.translation.en = t_en
-	conf.translation.ru = t_ru
+	tEn, tRu := i18nSetup()
+	conf.translation = make(map[string]i18n.TranslateFunc)
+	conf.translation["en"] = tEn
+	conf.translation["ru"] = tRu
 
 	conf.redis.addr = viper.GetString(envTelegramRedisAddr)
 	conf.redis.passwd = viper.GetString(envTelegramRedisPasswd)
 	conf.redis.channel = viper.GetString(envTelegramRedisChannel)
 	conf.redis.db = viper.GetInt(envTelegramRedisDb)
+
+	conf.mongo.url = viper.GetString(envTelegramMongoUrl)
+	conf.mongo.dbName = viper.GetString(envTelegramMongoDbName)
 
 	return conf
 }
@@ -284,7 +301,7 @@ func (server Server) checkIfReady(photoMetadata metadata.PhotoMetadata) {
 		_, err = server.redis.Publish(server.config.redis.channel, meta).Result()
 
 		if err != nil {
-			log.Printf("[ERROR] Couldn't publish photo metadata to redis channel: %s",
+			log.Printf("[ERROR] Couldn't publish photo metadata to redis channel %s: %s",
 				server.config.redis.channel, err)
 		}
 
@@ -379,7 +396,7 @@ func (server *Server) handleText(update tgbotapi.Update) {
 		server.bot.Send(msg)
 	case "/ru":
 		log.Printf("[INFO] Change locale to ru-ru for chat %v", update.Message.Chat.ID)
-		server.setLocale(update.Message.Chat.ID, server.config.translation.ru)
+		server.setLocale(update.Message.Chat.ID, "ru")
 
 		msg := tgbotapi.NewMessage(update.Message.Chat.ID,
 			server.t(update.Message.Chat.ID, "locale_ru"))
@@ -396,7 +413,7 @@ func (server *Server) handleText(update tgbotapi.Update) {
 		server.sendIntro1(update)
 	case "/en":
 		log.Printf("[INFO] Change locale to en-us for chat %v", update.Message.Chat.ID)
-		server.setLocale(update.Message.Chat.ID, server.config.translation.en)
+		server.setLocale(update.Message.Chat.ID, "en")
 
 		msg := tgbotapi.NewMessage(update.Message.Chat.ID,
 			server.t(update.Message.Chat.ID, "locale_en"))
@@ -490,13 +507,13 @@ func (server *Server) handlePhoto(update tgbotapi.Update) {
 }
 
 func (server Server) pushPhoto(chatId int64, photoId, photoUrl string) (int64, error) {
-	metadata, err := json.Marshal(&metadata.PhotoMetadata{
+	photoMetadata, err := json.Marshal(&metadata.PhotoMetadata{
 		ChatId:chatId,
 		PhotoUrl:photoUrl,
 		PhotoId:photoId,
 	})
 
-	log.Printf("[DEBUG] JSON encoded metadata: %s", string(metadata))
+	log.Printf("[DEBUG] JSON encoded metadata: %s", string(photoMetadata))
 	if err != nil {
 		log.Printf("[ERROR] Couldn't encode photo metadata to JSON: %s", err)
 		return 0, err
@@ -521,10 +538,10 @@ func (server Server) pushPhoto(chatId int64, photoId, photoUrl string) (int64, e
 		log.Printf("[ERROR] Couldn't hset field %s: %s", "photo_id", err)
 	}
 
-	res, err := server.redis.Publish(server.config.redis.channel, metadata).Result()
+	res, err := server.redis.Publish(server.config.redis.channel, photoMetadata).Result()
 
 	if err != nil {
-		log.Printf("[ERROR] Couldn't publish photo metadata to redis channel: %s",
+		log.Printf("[ERROR] Couldn't publish photo metadata to redis channel %s: %s",
 			server.config.redis.channel, err)
 		return 0, err
 	}
@@ -543,24 +560,112 @@ func (server *Server) getFileLink(fileId string) string {
 	return fileUrl
 }
 
-func (server Server) setLocale(chatId int64, locale i18n.TranslateFunc) {
+func (server Server) setLocale(chatId int64, locale string) {
 	chatConf := server.config.chatConfig[chatId]
 	chatConf.locale = locale
 	log.Printf("[DEBUG] Set locale %v for chatId %v", locale, chatId)
 	server.config.chatConfig[chatId] = chatConf
-	// TODO store this in persistent storage
+
+	go server.saveChatConfig(chatId)
 	// TODO Make sure hashtags and caption are translated
+}
+
+func (server Server) saveChatConfig(chatId int64) error {
+	chatConf := server.config.chatConfig[chatId]
+
+	chatConf.chatId = chatId
+
+	log.Printf("[DEBUG] Saving chat config to mongo for %s: %v", chatId, chatConf)
+
+	session, err := mgo.Dial(server.config.mongo.url)
+
+	if err != nil {
+		log.Fatalf("Couldn't connect to mongo, %s", err)
+		return err
+	}
+
+	// FIXME this doesn't work (not setting anything in db)
+	c := session.DB(server.config.mongo.dbName).C(mongoSettingsCollectionName)
+	err = c.Insert(chatConf)
+
+	defer session.Close()
+
+	if err != nil {
+		log.Printf("[ERROR] Couldn't set chat config for %s: %s", chatId, err)
+		return err
+	}
+
+	return nil
+}
+
+func (server Server) getChatLocale(chatId int64) (string, error) {
+	session, err := mgo.Dial(server.config.mongo.url)
+
+	if err != nil {
+		log.Fatalf("Couldn't connect to mongo, %s", err)
+		return "", err
+	}
+
+	c := session.DB(server.config.mongo.dbName).C(mongoSettingsCollectionName)
+
+	var result ChatConfig
+	err = c.Find(bson.M{"chatId":strconv.Itoa(int(chatId))}).One(&result)
+
+	defer session.Close()
+
+	if err != nil {
+		log.Printf("[ERROR] Couldn't find config for chat %s: %s", chatId, err)
+		return "", err
+	}
+
+	log.Printf("[DEBUG] Found locale for chat %s: %s", chatId, result.locale)
+
+	return result.locale, nil
+}
+
+func (server Server) mongoConnect() error {
+	log.Printf("[DEBUG] mongo url: %s", server.config.mongo.url)
+
+	session, err := mgo.Dial(server.config.mongo.url)
+
+	if err != nil {
+		log.Fatalf("Couldn't connect to mongo, %s", err)
+		return err
+	}
+
+	log.Printf("[INFO] Connected to mongo!")
+
+	//defer session.Close()
+
+	server.mongo = session
+
+	return nil
 }
 
 func (server Server) t(chatId int64, translationID string, args ...interface{}) string {
 	chatConf := server.config.chatConfig[chatId]
-	tFunc := chatConf.locale // TODO get this from persistent storage
+	localeStr := chatConf.locale
 
-	if tFunc == nil { // set default locale for chatId
-		server.setLocale(chatId, server.config.translation.en)
+	if localeStr == "" {
+		log.Printf("[DEBUG] Trying to get locale from mongo for %s before setting default en",
+			chatId)
+
+		localeFromMongo, err := server.getChatLocale(chatId)
+
+		if err != nil {
+			log.Printf("[ERROR] Couldn't get locale for chat, %s: %s", chatId, err)
+		}
+
+		if localeFromMongo == "" {
+			log.Printf("[DEBUG] Couldn't find locale for %s, setting default, en", chatId)
+			server.setLocale(chatId, "en")
+		} else {
+			server.setLocale(chatId, localeFromMongo)
+		}
 		return server.t(chatId, translationID, args...)
 	}
 
+	tFunc := server.config.translation[localeStr]
 	return tFunc(translationID, args...)
 }
 

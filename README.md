@@ -17,7 +17,7 @@ Basically, each worker lives in a separate subdirectory and has it's own README
 Use `./build.sh` script to build statically linked linux binaries inside corresponding worker folders.
 
 Then use `docker-compose up --build` command to get up and running locally. To deploy to production, use 
-`docker-machine` [as described here](https://medium.com/@Empanado/simple-continuous-deployment-with-docker-compose-docker-machine-and-gitlab-ci-9047765322e1)
+`eval $(docker-machine env machine-name)` [as described here](https://medium.com/@Empanado/simple-continuous-deployment-with-docker-compose-docker-machine-and-gitlab-ci-9047765322e1)
 
 ## Setup
 Make sure you have appropriate `.env` file at the project root that looks like so _(for more info on key values consult 

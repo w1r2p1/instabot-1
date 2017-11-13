@@ -13,6 +13,12 @@ TELEGRAM_DEMO_LANDING_URL=https://instabeat.ml/?utm_source=telegram
 TELEGRAM_BOT_TIMEOUT=60
 ````
 
+### MongoDb
+````bash
+TELEGRAM_MONGO_URL=localhost
+TELEGRAM_MONGO_DB_NAME=instabot
+````
+
 ### Redis
 This environment variables play major parts in worker Redis connection:
 ````bash
