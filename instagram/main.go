@@ -13,7 +13,7 @@ import (
 	"github.com/go-redis/redis"
 	"github.com/mitchellh/mapstructure"
 	"github.com/spf13/viper"
-	"gitlab.com/nuxdie/instabot/metadata"
+	"github.com/nuxdie/instabot/metadata"
 	"github.com/hashicorp/logutils"
 	"os"
 	"fmt"
@@ -85,7 +85,7 @@ func config() *workerConfig {
 	viper.AutomaticEnv()
 	viper.SetDefault(envWorkerRedisAddr, "localhost:6379")
 	viper.SetDefault(envWorkerRedisPasswd, "")
-	viper.SetDefault(envWorkerRedisChannel, "queue")
+	viper.SetDefault(envWorkerRedisChannel, "message")
 	viper.SetDefault(envWorkerRedisDb, 0)
 	viper.SetDefault(envLogLevel, "WARN")
 
@@ -123,17 +123,16 @@ func (worker Worker) setupRedis() {
 	pubsub := worker.redis.Subscribe(worker.config.redis.channel)
 	ch := pubsub.Channel()
 
-	subscr, err := pubsub.ReceiveTimeout(time.Second*time.Duration(10))
+	status, err := pubsub.ReceiveTimeout(time.Second*time.Duration(10))
 
 	defer pubsub.Close()
 
 	if err != nil {
-		log.Fatalf("[ERROR] Couldn't subscribe to redis channel %s: %s",
+		log.Panicf("[ERROR] Couldn't subscribe to redis channel %s: %s",
 			worker.config.redis.channel, err)
 	}
 
-	log.Printf("[INFO] subscribed to redis channel %s: %v",
-		worker.config.redis.channel, subscr)
+	log.Printf("[INFO] redis %v", status)
 
 	for message := range ch {
 		go func(messageVal *redis.Message) {
@@ -143,19 +142,20 @@ func (worker Worker) setupRedis() {
 }
 
 func (worker Worker) handleRedis(message *redis.Message) {
-	log.Printf("[DEBUG] Got message from redis channel %s: %v",
+	log.Printf("[VERBOSE] Got message from redis channel %s: %v",
 		worker.config.redis.channel, message)
 
-	var updateMsg metadata.PhotoMetadata
+	var updateMsg metadata.ChannelMessage
 	err := json.Unmarshal([]byte(message.Payload), &updateMsg)
 
 	if err != nil {
 		log.Printf("[ERROR] Couldn't decode JSON metadata, %s", message.Payload)
 	}
 
-	log.Printf("[VERBOSE] Got metadata from message %v", updateMsg)
+	if updateMsg.Type == "PUBLISH" {
+		log.Printf("[DEBUG] Got message from redis channel %s: %v",
+			worker.config.redis.channel, message)
 
-	if updateMsg.Publish {
 		metaHGet, err := worker.redis.HGetAll(updateMsg.PhotoId).Result()
 
 		if err != nil {
@@ -187,10 +187,28 @@ func (worker Worker) handleRedis(message *redis.Message) {
 			log.Printf("[INFO] Another upload in progress, aborting %s", metaFromRedis.PhotoId)
 			return
 		}
+
 		mediaCodeRes, err := worker.process(metaFromRedis)
 
 		if err != nil {
 			log.Printf("[ERROR] Couldn't get status from API: %s", err)
+
+			updateMessage, err := json.Marshal(&metadata.ChannelMessage{
+				Type: "ERROR",
+				PhotoId: metaFromRedis.PhotoId,
+				Message: fmt.Sprintf("[ERROR] %s", err),
+			})
+
+			if err != nil {
+				log.Printf("[ERROR] Couldn't encode JSON: %s", err)
+			}
+			_, err = worker.redis.Publish(worker.config.redis.channel, updateMessage).Result()
+
+			if err != nil {
+				log.Printf("[ERROR] Couldn't publish message to redis channel %s: %s",
+					worker.config.redis.channel, err)
+			}
+
 			return
 		}
 
@@ -212,17 +230,23 @@ func (worker Worker) handleRedis(message *redis.Message) {
 				updateMsg.PhotoId, err)
 		}
 
-		meta, err := json.Marshal(&metaFromRedis)
+		updateMessage, err := json.Marshal(&metadata.ChannelMessage{
+			Type: "DONE",
+			PhotoId: metaFromRedis.PhotoId,
+		})
 
 		if err != nil {
 			log.Printf("[ERROR] Couldn't encode JSON: %s", err)
 		}
-		_, err = worker.redis.Publish(worker.config.redis.channel, meta).Result()
+		_, err = worker.redis.Publish(worker.config.redis.channel, updateMessage).Result()
 
 		if err != nil {
-			log.Printf("[ERROR] Couldn't publish photo metadata to redis channel %s: %s",
+			log.Printf("[ERROR] Couldn't publish message to redis channel %s: %s",
 				worker.config.redis.channel, err)
 		}
+	} else {
+		log.Printf("[VERBOSE] Not interested in this message: %v", updateMsg)
+		return
 	}
 }
 

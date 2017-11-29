@@ -17,3 +17,9 @@ type PhotoMetadata struct {
 	NSFW         bool   `json:"nsfw"          mapstructure:"nsfw"`
 	NSFWChecked  bool   `json:"nsfw_checked"  mapstructure:"nsfw_checked"`
 }
+
+type ChannelMessage struct {
+	Type				 string `json:"type"      	  mapstructure:"type"`
+	PhotoId      string `json:"photo_id"      mapstructure:"photo_id"`
+	Message      string `json:"message"       mapstructure:"message"`
+}

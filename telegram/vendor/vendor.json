@@ -141,6 +141,12 @@
 			"revisionTime": "2017-09-17T05:40:38Z"
 		},
 		{
+			"checksumSHA1": "qtqBbrLGv7BVMCsBXS+pEvLFAak=",
+			"path": "github.com/nuxdie/instabot/metadata",
+			"revision": "cb824261f4874e25dad9af2ec39e68bcbf7119a0",
+			"revisionTime": "2017-11-29T19:06:32Z"
+		},
+		{
 			"checksumSHA1": "pQwCl21+SANhotaqy5iEdqOnQiY=",
 			"path": "github.com/pelletier/go-toml",
 			"revision": "4e9e0ee19b60b13eb79915933f44d8ed5f268bdd",
@@ -187,12 +193,6 @@
 			"path": "github.com/technoweenie/multipartstreamer",
 			"revision": "a90a01d73ae432e2611d178c18367fbaa13e0154",
 			"revisionTime": "2013-10-20T00:18:33Z"
-		},
-		{
-			"checksumSHA1": "L0oHx1wwSPg0jBJZcNiNiza6nKM=",
-			"path": "gitlab.com/nuxdie/instabot/metadata",
-			"revision": "6b3223b628c0f5f79090a7c05f2b22ff83ab300c",
-			"revisionTime": "2017-11-09T18:29:44Z"
 		},
 		{
 			"checksumSHA1": "hRKI/ZBMYJurl1rUuknCUbkkKF8=",

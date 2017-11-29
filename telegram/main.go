@@ -12,11 +12,11 @@ import (
 	"github.com/nicksnyder/go-i18n/i18n"
 	"github.com/spf13/viper"
 	"gopkg.in/telegram-bot-api.v4"
-	"gitlab.com/nuxdie/instabot/metadata"
 	"github.com/hashicorp/logutils"
 	"strconv"
 	"gopkg.in/mgo.v2"
 	"gopkg.in/mgo.v2/bson"
+	"github.com/nuxdie/instabot/metadata"
 )
 
 type Server struct {
@@ -118,15 +118,14 @@ func (server Server) redisSetup() {
 	pubsub := server.redis.Subscribe(server.config.redis.channel)
 	ch := pubsub.Channel()
 
-	subscr, err := pubsub.ReceiveTimeout(time.Second*time.Duration(10))
+	status, err := pubsub.ReceiveTimeout(time.Second*time.Duration(10))
 
 	if err != nil {
-		log.Fatalf("[ERROR] Couldn't subscribe to redis channel %s: %s",
+		log.Panicf("[ERROR] Couldn't subscribe to redis channel %s: %s",
 			server.config.redis.channel, err)
 	}
 
-	log.Printf("[INFO] subscribed to redis channel %s: %v",
-		server.config.redis.channel, subscr)
+	log.Printf("[INFO] redis %v", status)
 
 	for message := range ch {
 		go func(messageVal *redis.Message){
@@ -171,7 +170,7 @@ func config() *serverConfig {
 	viper.SetDefault(envTelegramRedisAddr, "localhost:6379")
 	viper.SetDefault(envTelegramRedisPasswd, "")
 	viper.SetDefault(envTelegramRedisDb, 0)
-	viper.SetDefault(envTelegramRedisChannel, "queue")
+	viper.SetDefault(envTelegramRedisChannel, "message")
 	viper.SetDefault(envLogLevel, "WARN")
 
 	filter := &logutils.LevelFilter{
@@ -232,33 +231,68 @@ func (server *Server) Start() {
 }
 
 func (server Server) handleRedis(message *redis.Message) {
-	log.Printf("[DEBUG] Got message from redis channel %s: %v",
+	log.Printf("[VERBOSE] Got message from redis channel %s: %v",
 		server.config.redis.channel, message)
 
-	var updateMsg metadata.PhotoMetadata
+	var updateMsg metadata.ChannelMessage
 	err := json.Unmarshal([]byte(message.Payload), &updateMsg)
 
 	if err != nil {
 		log.Printf("[ERROR] Couldn't decode JSON metadata, %s", message.Payload)
 	}
 
-	res, err := server.redis.HGetAll(updateMsg.PhotoId).Result()
+	switch updateMsg.Type {
+	case "NEW":
+		fallthrough
+	case "DONE":
+		log.Printf("[DEBUG] Got message from redis %v", updateMsg)
 
-	if err != nil {
-		log.Printf("[ERROR] Couldn't hget from redis for ID %s: %s",
-			updateMsg.PhotoId, err)
+		res, err := server.redis.HGetAll(updateMsg.PhotoId).Result()
+
+		if err != nil {
+			log.Printf("[ERROR] Couldn't hget from redis for ID %s: %s",
+				updateMsg.PhotoId, err)
+		}
+		log.Printf("[VERBOSE] Got from redis: %v", res)
+
+		var metaFromRedis metadata.PhotoMetadata
+		err = mapstructure.WeakDecode(res, &metaFromRedis)
+
+		if err != nil {
+			log.Printf("[ERROR] Couldn't map response from API to metadata struct: %s", err)
+			return
+		}
+
+		server.checkIfReady(metaFromRedis)
+	case "ERROR":
+		log.Printf("[DEBUG] Got message from redis %v", updateMsg)
+
+		res, err := server.redis.HGetAll(updateMsg.PhotoId).Result()
+
+		if err != nil {
+			log.Printf("[ERROR] Couldn't hget from redis for ID %s: %s",
+				updateMsg.PhotoId, err)
+		}
+		log.Printf("[VERBOSE] Got from redis: %v", res)
+
+		var metaFromRedis metadata.PhotoMetadata
+		err = mapstructure.WeakDecode(res, &metaFromRedis)
+
+		if err != nil {
+			log.Printf("[ERROR] Couldn't map response from API to metadata struct: %s", err)
+			return
+		}
+
+		msg := tgbotapi.NewMessage(metaFromRedis.ChatId,
+			server.t(metaFromRedis.ChatId, "publish_err", &struct {
+				Error string
+			}{Error: updateMsg.Message}))
+		server.bot.Send(msg)
+	default:
+		log.Printf("[VERBOSE] Not interested in this message: %v", updateMsg)
 	}
-	log.Printf("[VERBOSE] Got from redis: %v", res)
 
-	var metaFromRedis metadata.PhotoMetadata
-	err = mapstructure.WeakDecode(res, &metaFromRedis)
 
-	if err != nil {
-		log.Printf("[ERROR] Couldn't map response from API to metadata struct: %s", err)
-		return
-	}
-
-	server.checkIfReady(metaFromRedis)
 }
 
 func (server Server) checkIfReady(photoMetadata metadata.PhotoMetadata) {
@@ -289,7 +323,12 @@ func (server Server) checkIfReady(photoMetadata metadata.PhotoMetadata) {
 
 		photoMetadata.Publish = true
 
-		meta, err := json.Marshal(&photoMetadata)
+		var updateMesssage metadata.ChannelMessage
+
+		updateMesssage.Type = "PUBLISH"
+		updateMesssage.PhotoId = photoMetadata.PhotoId
+
+		meta, err := json.Marshal(&updateMesssage)
 
 		if err != nil {
 			log.Printf("[ERROR] Couldn't encode JSON: %s", err)
@@ -297,7 +336,7 @@ func (server Server) checkIfReady(photoMetadata metadata.PhotoMetadata) {
 		_, err = server.redis.Publish(server.config.redis.channel, meta).Result()
 
 		if err != nil {
-			log.Printf("[ERROR] Couldn't publish photo metadata to redis channel %s: %s",
+			log.Printf("[ERROR] Couldn't publish message to redis channel %s: %s",
 				server.config.redis.channel, err)
 		}
 
@@ -519,13 +558,12 @@ func (server *Server) handlePhoto(update tgbotapi.Update) {
 }
 
 func (server Server) pushPhoto(chatId int64, photoId, photoUrl string) (int64, error) {
-	photoMetadata, err := json.Marshal(&metadata.PhotoMetadata{
-		ChatId:chatId,
-		PhotoUrl:photoUrl,
-		PhotoId:photoId,
+	updateMessage, err := json.Marshal(&metadata.ChannelMessage{
+		Type: "NEW",
+		PhotoId: photoId,
 	})
 
-	log.Printf("[VERBOSE] JSON encoded metadata: %s", string(photoMetadata))
+	log.Printf("[VERBOSE] JSON encoded metadata: %s", string(updateMessage))
 	if err != nil {
 		log.Printf("[ERROR] Couldn't encode photo metadata to JSON: %s", err)
 		return 0, err
@@ -550,10 +588,10 @@ func (server Server) pushPhoto(chatId int64, photoId, photoUrl string) (int64, e
 		log.Printf("[ERROR] Couldn't hset field %s: %s", "photo_id", err)
 	}
 
-	res, err := server.redis.Publish(server.config.redis.channel, photoMetadata).Result()
+	res, err := server.redis.Publish(server.config.redis.channel, updateMessage).Result()
 
 	if err != nil {
-		log.Printf("[ERROR] Couldn't publish photo metadata to redis channel %s: %s",
+		log.Printf("[ERROR] Couldn't publish message to redis channel %s: %s",
 			server.config.redis.channel, err)
 		return 0, err
 	}
