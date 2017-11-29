@@ -175,7 +175,7 @@ func config() *serverConfig {
 	viper.SetDefault(envLogLevel, "WARN")
 
 	filter := &logutils.LevelFilter{
-		Levels: []logutils.LogLevel{"DEBUG", "INFO", "WARN", "ERROR", "FATAL"},
+		Levels: []logutils.LogLevel{"VERBOSE", "DEBUG", "INFO", "WARN", "ERROR", "FATAL"},
 		MinLevel: logutils.LogLevel(viper.GetString(envLogLevel)),
 		Writer: os.Stderr,
 	}
@@ -248,7 +248,7 @@ func (server Server) handleRedis(message *redis.Message) {
 		log.Printf("[ERROR] Couldn't hget from redis for ID %s: %s",
 			updateMsg.PhotoId, err)
 	}
-	log.Printf("[DEBUG] Got from redis: %v", res)
+	log.Printf("[VERBOSE] Got from redis: %v", res)
 
 	var metaFromRedis metadata.PhotoMetadata
 	err = mapstructure.WeakDecode(res, &metaFromRedis)
@@ -262,7 +262,7 @@ func (server Server) handleRedis(message *redis.Message) {
 }
 
 func (server Server) checkIfReady(photoMetadata metadata.PhotoMetadata) {
-	log.Printf("[DEBUG] cheking metadata from redis: %v", photoMetadata)
+	log.Printf("[VERBOSE] cheking metadata from redis: %v", photoMetadata)
 	currentChatConfig := server.config.chatConfig[photoMetadata.ChatId]
 
 	if photoMetadata.Publish == false &&
@@ -308,7 +308,7 @@ func (server Server) checkIfReady(photoMetadata metadata.PhotoMetadata) {
 		server.bot.Send(msg)
 		return
 	} else {
-		log.Printf("[INFO] Not yet ready for publish %v", photoMetadata)
+		log.Printf("[VERBOSE] Not yet ready for publish %v", photoMetadata)
 	}
 
 	if photoMetadata.Published {
@@ -525,7 +525,7 @@ func (server Server) pushPhoto(chatId int64, photoId, photoUrl string) (int64, e
 		PhotoId:photoId,
 	})
 
-	log.Printf("[DEBUG] JSON encoded metadata: %s", string(photoMetadata))
+	log.Printf("[VERBOSE] JSON encoded metadata: %s", string(photoMetadata))
 	if err != nil {
 		log.Printf("[ERROR] Couldn't encode photo metadata to JSON: %s", err)
 		return 0, err
@@ -592,7 +592,7 @@ func (server Server) saveChatConfig(chatId int64) error {
 	session, err := mgo.Dial(server.config.mongo.url)
 
 	if err != nil {
-		log.Fatalf("Couldn't connect to mongo, %s", err)
+		log.Fatalf("[ERROR] Couldn't connect to mongo, %s", err)
 		return err
 	}
 
@@ -614,7 +614,7 @@ func (server Server) getChatLocale(chatId int64) (string, error) {
 	session, err := mgo.Dial(server.config.mongo.url)
 
 	if err != nil {
-		log.Fatalf("Couldn't connect to mongo, %s", err)
+		log.Fatalf("[ERROR] Couldn't connect to mongo, %s", err)
 		return "", err
 	}
 
@@ -630,7 +630,7 @@ func (server Server) getChatLocale(chatId int64) (string, error) {
 		return "", err
 	}
 
-	log.Printf("[DEBUG] Found locale for chat %s: %s", chatId, result.Locale)
+	log.Printf("[VERBOSE] Found locale for chat %s: %s", chatId, result.Locale)
 
 	return result.Locale, nil
 }
@@ -641,7 +641,7 @@ func (server Server) mongoConnect() error {
 	session, err := mgo.Dial(server.config.mongo.url)
 
 	if err != nil {
-		log.Fatalf("Couldn't connect to mongo, %s", err)
+		log.Fatalf("[ERROR] Couldn't connect to mongo, %s", err)
 		return err
 	}
 

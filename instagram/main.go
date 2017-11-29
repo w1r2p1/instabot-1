@@ -90,7 +90,7 @@ func config() *workerConfig {
 	viper.SetDefault(envLogLevel, "WARN")
 
 	filter := &logutils.LevelFilter{
-		Levels: []logutils.LogLevel{"DEBUG", "INFO", "WARN", "ERROR", "FATAL"},
+		Levels: []logutils.LogLevel{"VERBOSE", "DEBUG", "INFO", "WARN", "ERROR", "FATAL"},
 		MinLevel: logutils.LogLevel(viper.GetString(envLogLevel)),
 		Writer: os.Stderr,
 	}
@@ -153,7 +153,7 @@ func (worker Worker) handleRedis(message *redis.Message) {
 		log.Printf("[ERROR] Couldn't decode JSON metadata, %s", message.Payload)
 	}
 
-	log.Printf("[DEBUG] Got metadata from message %v", updateMsg)
+	log.Printf("[VERBOSE] Got metadata from message %v", updateMsg)
 
 	if updateMsg.Publish {
 		metaHGet, err := worker.redis.HGetAll(updateMsg.PhotoId).Result()
@@ -162,7 +162,7 @@ func (worker Worker) handleRedis(message *redis.Message) {
 			log.Printf("[ERROR] Couldn't hget from redis for ID %s: %s",
 				updateMsg.PhotoId, err)
 		}
-		log.Printf("[DEBUG] Got from redis: %v", metaHGet)
+		log.Printf("[VERBOSE] Got from redis: %v", metaHGet)
 
 		var metaFromRedis metadata.PhotoMetadata
 		err = mapstructure.WeakDecode(metaHGet, &metaFromRedis)
@@ -173,7 +173,7 @@ func (worker Worker) handleRedis(message *redis.Message) {
 			return
 		}
 
-		log.Printf("[DEBUG] got metadata from redis: %v", metaFromRedis)
+		log.Printf("[VERBOSE] got metadata from redis: %v", metaFromRedis)
 
 		if metaFromRedis.Published {
 			log.Printf("[INFO] Nothing to do. Already has published status: %s, %b",
@@ -181,7 +181,7 @@ func (worker Worker) handleRedis(message *redis.Message) {
 			return
 		}
 
-		log.Printf("[DEBUG] photoLocker contents %v", worker.config.photoLocker)
+		log.Printf("[VERBOSE] photoLocker contents %v", worker.config.photoLocker)
 
 		if worker.config.photoLocker[metaFromRedis.PhotoId] {
 			log.Printf("[INFO] Another upload in progress, aborting %s", metaFromRedis.PhotoId)
@@ -234,7 +234,7 @@ func (worker Worker) process(photoMetadata metadata.PhotoMetadata) (string, erro
 		return "", err
 	}
 
-	res, err := worker.upload(resp.Body, photoMetadata.FinalCaption, photoMetadata.PhotoId)
+	res, err := worker.uploadAndDisableComments(resp.Body, photoMetadata.FinalCaption, photoMetadata.PhotoId)
 
 	if err != nil {
 		log.Printf("[ERROR] Couldn't upload photo %s to Instagram: %s",
@@ -244,6 +244,18 @@ func (worker Worker) process(photoMetadata metadata.PhotoMetadata) (string, erro
 	}
 
 	return res.Media.Code, nil
+}
+
+func (worker Worker) disableComments(insta *goinsta.Instagram, uploadPhotoResponse response.UploadPhotoResponse) error {
+	_, err := insta.DisableComments(uploadPhotoResponse.Media.ID)
+
+	if err != nil {
+		log.Printf("[ERROR] Error trying to disable comments for mediaId %s: %s",
+			uploadPhotoResponse.Media.ID, err)
+		return err
+	}
+
+	return nil
 }
 
 func (worker Worker) loginInstagram() (*goinsta.Instagram, error) {
@@ -282,7 +294,7 @@ func getPhoto(uri string) (*http.Response, error) {
 }
 
 
-func (worker Worker) upload(photo io.ReadCloser, caption string, photoId string) (
+func (worker Worker) uploadAndDisableComments(photo io.ReadCloser, caption string, photoId string) (
 	response.UploadPhotoResponse, error) {
 
 	insta, err := worker.loginInstagram()
@@ -308,19 +320,16 @@ func (worker Worker) upload(photo io.ReadCloser, caption string, photoId string)
 		return uploadPhotoResponse, err
 	}
 
+	log.Printf("[DEBUG] Disabling comments for %s", photoId)
+
+	worker.disableComments(insta, uploadPhotoResponse)
+
+	if err != nil {
+		log.Printf("[ERROR] Couldn't disable comments: %s", err)
+		return uploadPhotoResponse, err
+	}
+
 	defer insta.Logout()
 
 	return uploadPhotoResponse, nil
 }
-/*
-func disableComments(insta *goinsta.Instagram,
-	uploadPhotoResponse response.UploadPhotoResponse) {
-	// TODO use this functionality if config says so
-	_, err := insta.DisableComments(uploadPhotoResponse.Media.ID)
-
-	if err != nil {
-		//panic(log.Sprintf("Error trying to disable comments for mediaId %s: %s",
-		//	uploadPhotoResponse.Media.ID, err))
-	}
-}
-*/
