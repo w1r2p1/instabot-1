@@ -1,4 +1,6 @@
-build
-google-vision-api-key.json
 .idea
-*.pem
+build
+key.json
+.env
+!ca-certificates.crt
+**/ca-certificates.crt

@@ -1,0 +1,61 @@
+version: '3'
+services:
+  telegram:
+    build: ./telegram
+    depends_on:
+      - mongo
+      - redis
+      - instagram
+#      - nsfw
+#      - caption
+#      - hashtag
+    restart: always
+    environment:
+      TELEGRAM_REDIS_ADDR: 'redis:6379'
+      TELEGRAM_MONGO_URL: mongo
+    env_file:
+      - .env
+  instagram:
+    build: ./instagram
+    depends_on:
+      - redis
+#      - nsfw
+#      - caption
+#      - hashtag
+    restart: always
+    environment:
+      WORKER_REDIS_ADDR: 'redis:6379'
+    env_file:
+      - .env
+#  caption:
+#    build: ./caption
+#    depends_on:
+#      - redis
+#    restart: always
+#    environment:
+#      WORKER_REDIS_ADDR: 'redis:6379'
+#    env_file:
+#      - .env
+#  nsfw:
+#    build: ./nsfw
+#    depends_on:
+#      - redis
+#    restart: always
+#    environment:
+#      WORKER_REDIS_ADDR: 'redis:6379'
+#    env_file:
+#      - .env
+#  hashtag:
+#    build: ./hashtag
+#    depends_on:
+#      - redis
+#    restart: always
+#    environment:
+#      WORKER_REDIS_ADDR: 'redis:6379'
+#      GOOGLE_APPLICATION_CREDENTIALS: key.json
+  redis:
+    image: 'redis:3.2.11'
+    restart: always
+  mongo:
+    image: 'mongo:3.4.10'
+    restart: always

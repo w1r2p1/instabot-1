@@ -1,0 +1,359 @@
+package main
+
+import (
+	"encoding/json"
+	"io"
+	"log"
+	"net/http"
+	"net/url"
+	"time"
+
+	"github.com/ahmdrz/goinsta"
+	"github.com/ahmdrz/goinsta/response"
+	"github.com/go-redis/redis"
+	"github.com/mitchellh/mapstructure"
+	"github.com/spf13/viper"
+	"github.com/nuxdie/instabot/metadata"
+	"github.com/hashicorp/logutils"
+	"os"
+	"fmt"
+)
+
+const envLogLevel = "LOG_LEVEL"
+const envWorkerRedisAddr = "WORKER_REDIS_ADDR"
+const envWorkerRedisDb = "WORKER_REDIS_DB"
+const envWorkerRedisPasswd = "WORKER_REDIS_PASSWD"
+const envWorkerRedisChannel = "WORKER_REDIS_CHANNEL"
+const envWorkerInstagramUsername = "WORKER_INSTAGRAM_USERNAME"
+const envWorkerInstagramPassword = "WORKER_INSTAGRAM_PASSWORD"
+
+type Worker struct {
+	redis *redis.Client
+	insta goinsta.Instagram
+	config *workerConfig
+}
+
+type workerConfig struct {
+	instagram struct{
+		username string
+		password string
+	}
+	redis struct{
+		channel string
+		addr string
+		passwd string
+		db int
+	}
+	photoLocker map[string]bool // used to make sure we don't do double post
+}
+
+func main() {
+	worker := NewWorker()
+
+	worker.Start()
+}
+
+func NewWorker() *Worker {
+	var worker Worker
+
+	worker.config = config()
+
+	worker.redis = redis.NewClient(&redis.Options{
+		Addr: worker.config.redis.addr,
+		Password: worker.config.redis.passwd,
+		DB: worker.config.redis.db,
+	})
+
+	insta, err := worker.loginInstagram()
+
+	if err != nil {
+		log.Fatalf("[ERROR] Couldn't login to instagram: %s", err)
+	}
+
+	worker.insta = *insta
+
+	worker.setupRedis()
+
+	return &worker
+}
+
+func (worker Worker) Start() {
+
+}
+
+func config() *workerConfig {
+	viper.AutomaticEnv()
+	viper.SetDefault(envWorkerRedisAddr, "localhost:6379")
+	viper.SetDefault(envWorkerRedisPasswd, "")
+	viper.SetDefault(envWorkerRedisChannel, "message")
+	viper.SetDefault(envWorkerRedisDb, 0)
+	viper.SetDefault(envLogLevel, "WARN")
+
+	filter := &logutils.LevelFilter{
+		Levels: []logutils.LogLevel{"VERBOSE", "DEBUG", "INFO", "WARN", "ERROR", "FATAL"},
+		MinLevel: logutils.LogLevel(viper.GetString(envLogLevel)),
+		Writer: os.Stderr,
+	}
+	log.SetOutput(filter)
+
+	conf := &workerConfig{}
+
+	conf.redis.addr = viper.GetString(envWorkerRedisAddr)
+	conf.redis.passwd = viper.GetString(envWorkerRedisPasswd)
+	conf.redis.channel = viper.GetString(envWorkerRedisChannel)
+	conf.redis.db = viper.GetInt(envWorkerRedisDb)
+
+	conf.instagram.username = viper.GetString(envWorkerInstagramUsername)
+	conf.instagram.password = viper.GetString(envWorkerInstagramPassword)
+
+	conf.photoLocker = make(map[string]bool)
+
+	return conf
+}
+
+func (worker Worker) setupRedis() {
+	pong, err := worker.redis.Ping().Result()
+
+	if err != nil {
+		log.Printf("[ERROR] Couldn't ping redis server %s", err)
+	} else {
+		log.Printf("[DEBUG] got pong from redis %v", pong)
+	}
+
+	pubsub := worker.redis.Subscribe(worker.config.redis.channel)
+	ch := pubsub.Channel()
+
+	status, err := pubsub.ReceiveTimeout(time.Second*time.Duration(10))
+
+	defer pubsub.Close()
+
+	if err != nil {
+		log.Panicf("[ERROR] Couldn't subscribe to redis channel %s: %s",
+			worker.config.redis.channel, err)
+	}
+
+	log.Printf("[INFO] redis %v", status)
+
+	for message := range ch {
+		go func(messageVal *redis.Message) {
+			worker.handleRedis(messageVal)
+		}(message)
+	}
+}
+
+func (worker Worker) handleRedis(message *redis.Message) {
+	log.Printf("[VERBOSE] Got message from redis channel %s: %v",
+		worker.config.redis.channel, message)
+
+	var updateMsg metadata.ChannelMessage
+	err := json.Unmarshal([]byte(message.Payload), &updateMsg)
+
+	if err != nil {
+		log.Printf("[ERROR] Couldn't decode JSON metadata, %s", message.Payload)
+	}
+
+	if updateMsg.Type == "PUBLISH" {
+		log.Printf("[DEBUG] Got message from redis channel %s: %v",
+			worker.config.redis.channel, message)
+
+		metaHGet, err := worker.redis.HGetAll(updateMsg.PhotoId).Result()
+
+		if err != nil {
+			log.Printf("[ERROR] Couldn't hget from redis for ID %s: %s",
+				updateMsg.PhotoId, err)
+		}
+		log.Printf("[VERBOSE] Got from redis: %v", metaHGet)
+
+		var metaFromRedis metadata.PhotoMetadata
+		err = mapstructure.WeakDecode(metaHGet, &metaFromRedis)
+
+		if err != nil {
+			log.Printf("[ERROR] Couldn't map response from API to metadata struct: %s",
+				err)
+			return
+		}
+
+		log.Printf("[VERBOSE] got metadata from redis: %v", metaFromRedis)
+
+		if metaFromRedis.Published {
+			log.Printf("[INFO] Nothing to do. Already has published status: %s, %b",
+				metaFromRedis.Publish, metaFromRedis.Published)
+			return
+		}
+
+		log.Printf("[VERBOSE] photoLocker contents %v", worker.config.photoLocker)
+
+		if worker.config.photoLocker[metaFromRedis.PhotoId] {
+			log.Printf("[INFO] Another upload in progress, aborting %s", metaFromRedis.PhotoId)
+			return
+		}
+
+		mediaCodeRes, err := worker.process(metaFromRedis)
+
+		if err != nil {
+			log.Printf("[ERROR] Couldn't get status from API: %s", err)
+
+			updateMessage, err := json.Marshal(&metadata.ChannelMessage{
+				Type: "ERROR",
+				PhotoId: metaFromRedis.PhotoId,
+				Message: fmt.Sprintf("[ERROR] %s", err),
+			})
+
+			if err != nil {
+				log.Printf("[ERROR] Couldn't encode JSON: %s", err)
+			}
+			_, err = worker.redis.Publish(worker.config.redis.channel, updateMessage).Result()
+
+			if err != nil {
+				log.Printf("[ERROR] Couldn't publish message to redis channel %s: %s",
+					worker.config.redis.channel, err)
+			}
+
+			return
+		}
+
+		status := len(metaHGet) != 0
+		metaFromRedis.Published = status
+		metaFromRedis.PublishedUrl = "https://www.instagram.com/p/" + mediaCodeRes
+
+		_, err = worker.redis.HSet(updateMsg.PhotoId, "published", status).Result()
+
+		if err != nil {
+			log.Printf("[ERROR] Couldn't set status in redis for %s: %s",
+				updateMsg.PhotoId, err)
+		}
+		_, err = worker.redis.HSet(updateMsg.PhotoId, "published_url",
+			metaFromRedis.PublishedUrl).Result()
+
+		if err != nil {
+			log.Printf("[ERROR] Couldn't set status in redis for %s: %s",
+				updateMsg.PhotoId, err)
+		}
+
+		updateMessage, err := json.Marshal(&metadata.ChannelMessage{
+			Type: "DONE",
+			PhotoId: metaFromRedis.PhotoId,
+		})
+
+		if err != nil {
+			log.Printf("[ERROR] Couldn't encode JSON: %s", err)
+		}
+		_, err = worker.redis.Publish(worker.config.redis.channel, updateMessage).Result()
+
+		if err != nil {
+			log.Printf("[ERROR] Couldn't publish message to redis channel %s: %s",
+				worker.config.redis.channel, err)
+		}
+	} else {
+		log.Printf("[VERBOSE] Not interested in this message: %v", updateMsg)
+		return
+	}
+}
+
+func (worker Worker) process(photoMetadata metadata.PhotoMetadata) (string, error) {
+	resp, err := getPhoto(photoMetadata.PhotoUrl)
+
+	if err != nil {
+		log.Printf("[ERROR] Couldn't get photo: %s", err)
+		return "", err
+	}
+
+	res, err := worker.uploadAndDisableComments(resp.Body, photoMetadata.FinalCaption, photoMetadata.PhotoId)
+
+	if err != nil {
+		log.Printf("[ERROR] Couldn't upload photo %s to Instagram: %s",
+			photoMetadata.PhotoId, err)
+		worker.config.photoLocker[photoMetadata.PhotoId] = false
+		return "", err
+	}
+
+	return res.Media.Code, nil
+}
+
+func (worker Worker) disableComments(insta *goinsta.Instagram, uploadPhotoResponse response.UploadPhotoResponse) error {
+	_, err := insta.DisableComments(uploadPhotoResponse.Media.ID)
+
+	if err != nil {
+		log.Printf("[ERROR] Error trying to disable comments for mediaId %s: %s",
+			uploadPhotoResponse.Media.ID, err)
+		return err
+	}
+
+	return nil
+}
+
+func (worker Worker) loginInstagram() (*goinsta.Instagram, error) {
+	if len(worker.config.instagram.username)*len(worker.config.instagram.password) == 0 {
+		log.Fatalf("[ERROR] Please provide valid instagram username and password")
+	}
+
+	insta := goinsta.New(worker.config.instagram.username, worker.config.instagram.password)
+
+	if err := insta.Login(); err != nil {
+		log.Fatalf("[ERROR] Couldn't login to Instagram %s", err)
+		return nil, err
+	}
+
+	log.Printf("[INFO] Logged in to Instagram")
+
+	return insta, nil
+}
+
+func getPhoto(uri string) (*http.Response, error) {
+	parsed, err := url.Parse(uri)
+
+	if parsed.Host == "" || err != nil {
+		log.Printf("[ERROR] Incorrect photo url %s provided: %s", uri, err)
+		return nil, err
+	}
+
+	resp, err := http.Get(uri)
+
+	if err != nil {
+		log.Printf("[ERROR] Could not get the photo by %s", uri)
+		return nil, err
+	}
+
+	return resp, nil
+}
+
+
+func (worker Worker) uploadAndDisableComments(photo io.ReadCloser, caption string, photoId string) (
+	response.UploadPhotoResponse, error) {
+
+	insta, err := worker.loginInstagram()
+
+	quality := 87
+	uploadId := worker.insta.NewUploadID()
+	filterType := goinsta.Filter_Valencia
+
+	var uploadPhotoResponse response.UploadPhotoResponse
+
+	if worker.config.photoLocker[photoId] {
+		log.Printf("[INFO] Another upload in progress, aborting %s", photoId)
+		defer insta.Logout()
+		return uploadPhotoResponse, fmt.Errorf("[ERROR] Another upload in progress, aborting")
+	}
+	worker.config.photoLocker[photoId] = true
+
+	uploadPhotoResponse, err = insta.UploadPhotoFromReader(photo,
+		caption, uploadId, quality, filterType)
+
+	if err != nil {
+		log.Printf("[ERROR] Couldn't upload photo to instagram: %s", err)
+		return uploadPhotoResponse, err
+	}
+
+	log.Printf("[DEBUG] Disabling comments for %s", photoId)
+
+	worker.disableComments(insta, uploadPhotoResponse)
+
+	if err != nil {
+		log.Printf("[ERROR] Couldn't disable comments: %s", err)
+		return uploadPhotoResponse, err
+	}
+
+	defer insta.Logout()
+
+	return uploadPhotoResponse, nil
+}

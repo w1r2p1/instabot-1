@@ -1,0 +1,56 @@
+{
+  "greeting": {
+    "other": "Hello, {{.Person}}!"
+  },
+  "wrong_file_type": {
+    "other": "Sorry I can only handle JPEG images at the moment. 😔 You sent me {{.Type}}."
+  },
+  "locale_ru": {
+    "other": "From now on I'll speak in russian. \nKa-lin-ka, ma-lin-ka, ma-lin-ka mo-ya! 🇷🇺"
+  },
+  "locale_en": {
+    "other": "From now on I'll speak english.\n🤖 I'll be back! 🇺🇸"
+  },
+  "meow": {
+    "other": "😺"
+  },
+  "step_1_1": {
+    "other": "I'm an Instagram bot that allows you to post photos to your Instagram account automatically adding caption, #hashtags and different styles."
+  },
+  "step_1_2": {
+    "other": "As I am a demo bot, I'll post only 3 photos from you to this demo Instagram account: {{.DemoInstagram}}"
+  },
+  "step_1_3": {
+    "other": "To start just send me a photo and see what happens. 😉"
+  },
+  "switch_locale": {
+    "other": "_🇷🇺 Чтобы переключиться на русский, отправьте_ /ru"
+  },
+  "publish_ok": {
+    "other": "Yay! Your photo has been queued for publishing!"
+  },
+  "publish_err": {
+    "other": "🚫 Unfortunately something broke and I couldn't publish your photo.\nHere's what went wrong: {{.Error}}"
+  },
+  "caption_ready": {
+    "other": "Hey, it looks like this is the photo is all about: {{.Caption}}"
+  },
+  "all_fields_ready": {
+    "other": "Hey, it looks like everything's ready for publish: {{.Info}}"
+  },
+  "published": {
+    "other": "✅ Done! You can see your photo here: {{.Url}}"
+  },
+  "nsfw_detected": {
+    "other": "Woopsie! 🤭 It looks like you've tried to publish something that should remain private. I won't post this as it's too mature for my demo account, 👯‍ sorry. Try a different photo, please! 😇"
+  },
+  "demo_end_1": {
+    "other": "Hey, I'm really sorry but you've already posted your free 3 photos."
+  },
+  "demo_end_2": {
+    "other": "If you'd like to post more, please see here on how to get more: {{.LandingUrl}}"
+  },
+  "registered": {
+    "other": "Congrats! You've been registered!"
+  }
+}
