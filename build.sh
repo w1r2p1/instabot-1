@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-for WORKER in telegram instagram caption hashtag nsfw
+for WORKER in telegram instagram
 do
   cd ${WORKER}
   echo ""
@@ -9,4 +9,4 @@ do
   cd ..
 done
 
-cp key.json hashtag/
+#cp key.json hashtag/

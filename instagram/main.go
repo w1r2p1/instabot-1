@@ -2,7 +2,6 @@ package main
 
 import (
 	"encoding/json"
-	"fmt"
 	"io"
 	"log"
 	"net/http"
@@ -17,6 +16,7 @@ import (
 	"gitlab.com/nuxdie/instabot/metadata"
 	"github.com/hashicorp/logutils"
 	"os"
+	"fmt"
 )
 
 const envLogLevel = "LOG_LEVEL"
@@ -44,10 +44,12 @@ type workerConfig struct {
 		passwd string
 		db int
 	}
+	photoLocker map[string]bool // used to make sure we don't do double post
 }
 
 func main() {
 	worker := NewWorker()
+
 	worker.Start()
 }
 
@@ -103,6 +105,8 @@ func config() *workerConfig {
 
 	conf.instagram.username = viper.GetString(envWorkerInstagramUsername)
 	conf.instagram.password = viper.GetString(envWorkerInstagramPassword)
+
+	conf.photoLocker = make(map[string]bool)
 
 	return conf
 }
@@ -177,6 +181,12 @@ func (worker Worker) handleRedis(message *redis.Message) {
 			return
 		}
 
+		log.Printf("[DEBUG] photoLocker contents %v", worker.config.photoLocker)
+
+		if worker.config.photoLocker[metaFromRedis.PhotoId] {
+			log.Printf("[INFO] Another upload in progress, aborting %s", metaFromRedis.PhotoId)
+			return
+		}
 		mediaCodeRes, err := worker.process(metaFromRedis)
 
 		if err != nil {
@@ -210,7 +220,7 @@ func (worker Worker) handleRedis(message *redis.Message) {
 		_, err = worker.redis.Publish(worker.config.redis.channel, meta).Result()
 
 		if err != nil {
-			log.Printf("[ERROR] Couldn't publish photo metadata to redis channel: %s",
+			log.Printf("[ERROR] Couldn't publish photo metadata to redis channel %s: %s",
 				worker.config.redis.channel, err)
 		}
 	}
@@ -224,11 +234,12 @@ func (worker Worker) process(photoMetadata metadata.PhotoMetadata) (string, erro
 		return "", err
 	}
 
-	res, err := worker.upload(resp.Body, photoMetadata.FinalCaption)
+	res, err := worker.upload(resp.Body, photoMetadata.FinalCaption, photoMetadata.PhotoId)
 
 	if err != nil {
 		log.Printf("[ERROR] Couldn't upload photo %s to Instagram: %s",
 			photoMetadata.PhotoId, err)
+		worker.config.photoLocker[photoMetadata.PhotoId] = false
 		return "", err
 	}
 
@@ -271,7 +282,7 @@ func getPhoto(uri string) (*http.Response, error) {
 }
 
 
-func (worker Worker) upload(photo io.ReadCloser, caption string) (
+func (worker Worker) upload(photo io.ReadCloser, caption string, photoId string) (
 	response.UploadPhotoResponse, error) {
 
 	insta, err := worker.loginInstagram()
@@ -280,7 +291,16 @@ func (worker Worker) upload(photo io.ReadCloser, caption string) (
 	uploadId := worker.insta.NewUploadID()
 	filterType := goinsta.Filter_Valencia
 
-	uploadPhotoResponse, err := insta.UploadPhotoFromReader(photo,
+	var uploadPhotoResponse response.UploadPhotoResponse
+
+	if worker.config.photoLocker[photoId] {
+		log.Printf("[INFO] Another upload in progress, aborting %s", photoId)
+		defer insta.Logout()
+		return uploadPhotoResponse, fmt.Errorf("[ERROR] Another upload in progress, aborting")
+	}
+	worker.config.photoLocker[photoId] = true
+
+	uploadPhotoResponse, err = insta.UploadPhotoFromReader(photo,
 		caption, uploadId, quality, filterType)
 
 	if err != nil {
@@ -292,14 +312,15 @@ func (worker Worker) upload(photo io.ReadCloser, caption string) (
 
 	return uploadPhotoResponse, nil
 }
-
+/*
 func disableComments(insta *goinsta.Instagram,
 	uploadPhotoResponse response.UploadPhotoResponse) {
 	// TODO use this functionality if config says so
 	_, err := insta.DisableComments(uploadPhotoResponse.Media.ID)
 
 	if err != nil {
-		panic(fmt.Sprintf("Error trying to disable comments for mediaId %s: %s",
-			uploadPhotoResponse.Media.ID, err))
+		//panic(log.Sprintf("Error trying to disable comments for mediaId %s: %s",
+		//	uploadPhotoResponse.Media.ID, err))
 	}
 }
+*/

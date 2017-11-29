@@ -49,5 +49,8 @@
   },
   "demo_end_2": {
     "other": "If you'd like to post more, please see here on how to get more: {{.LandingUrl}}"
+  },
+  "registered": {
+    "other": "Congrats! You've been registered!"
   }
 }

@@ -48,10 +48,11 @@ type serverConfig struct {
 }
 
 type ChatConfig struct {
-	ID bson.ObjectId `bson:"_id,omitempty"`
-	chatId int64 `bson:"chat_id"`
-	locale string `bson:"locale"`
-	photoCount int `bson:"photo_count"`
+	ID         bson.ObjectId `bson:"_id,omitempty"`
+	ChatId     int64         `bson:"chat_id"`
+	Locale     string        `bson:"locale"`
+	PhotoCount int           `bson:"photo_count"`
+	Registered bool          `bson:"registered"`
 }
 
 const envLogLevel = "LOG_LEVEL"
@@ -264,13 +265,8 @@ func (server Server) checkIfReady(photoMetadata metadata.PhotoMetadata) {
 	log.Printf("[DEBUG] cheking metadata from redis: %v", photoMetadata)
 	currentChatConfig := server.config.chatConfig[photoMetadata.ChatId]
 
-	if len(photoMetadata.Hashtag) != 0 &&
-	len(photoMetadata.Caption) != 0 &&
-	photoMetadata.NSFWChecked &&
-	!photoMetadata.NSFW &&
-	photoMetadata.Publish == false &&
-	photoMetadata.Published == false &&
-	currentChatConfig.photoCount < 3 {
+	if photoMetadata.Publish == false &&
+	photoMetadata.Published == false {
 		_, err := server.redis.HSet(photoMetadata.PhotoId, "publish", true).Result()
 
 		if err != nil {
@@ -311,15 +307,17 @@ func (server Server) checkIfReady(photoMetadata metadata.PhotoMetadata) {
 			}{Info: info}))
 		server.bot.Send(msg)
 		return
+	} else {
+		log.Printf("[INFO] Not yet ready for publish %v", photoMetadata)
 	}
 
 	if photoMetadata.Published {
 		log.Printf("[INFO] Published %s.", photoMetadata.PhotoId)
 
-		if currentChatConfig.photoCount == 0 {
-			currentChatConfig.photoCount = 1
+		if currentChatConfig.PhotoCount == 0 {
+			currentChatConfig.PhotoCount = 1
 		} else {
-			currentChatConfig.photoCount++
+			currentChatConfig.PhotoCount++
 		}
 		server.config.chatConfig[photoMetadata.ChatId] = currentChatConfig
 
@@ -350,7 +348,7 @@ func (server *Server) handleUpdate(update tgbotapi.Update) {
 	if update.Message.Document != nil || update.Message.Photo != nil {
 		currentChatConfig := server.config.chatConfig[update.Message.Chat.ID]
 
-		if currentChatConfig.photoCount > 3 {
+		if !currentChatConfig.Registered && currentChatConfig.PhotoCount > 3 {
 			landingUrl := server.config.landingUrl+"&chat_id="+strconv.Itoa(int(update.Message.Chat.ID))
 
 			msg := tgbotapi.NewMessage(update.Message.Chat.ID,
@@ -428,12 +426,26 @@ func (server *Server) handleText(update tgbotapi.Update) {
 
 		time.Sleep(time.Millisecond * time.Duration(server.config.sleep))
 		server.sendIntro1(update)
+	case "/register":
+		log.Printf("[INFO] Request to register new user: %s", update.Message.Chat.UserName)
+		server.registerUser(update)
+		msg := tgbotapi.NewMessage(update.Message.Chat.ID,
+			server.t(update.Message.Chat.ID, "registered"))
+		server.bot.Send(msg)
 	default:
 		msg := tgbotapi.NewMessage(update.Message.Chat.ID,
 			server.t(update.Message.Chat.ID, "meow"))
 		server.bot.Send(msg)
 	}
 }
+
+func (server *Server) registerUser(update tgbotapi.Update) {
+	chatConfig := server.config.chatConfig[update.Message.Chat.ID]
+	chatConfig.Registered = true
+	server.config.chatConfig[update.Message.Chat.ID] = chatConfig
+	server.saveChatConfig(update.Message.Chat.ID)
+}
+
 func (server *Server) sendIntro1(update tgbotapi.Update) {
 	msg := tgbotapi.NewMessage(update.Message.Chat.ID,
 		server.t(update.Message.Chat.ID, "step_1_1"))
@@ -562,7 +574,7 @@ func (server *Server) getFileLink(fileId string) string {
 
 func (server Server) setLocale(chatId int64, locale string) {
 	chatConf := server.config.chatConfig[chatId]
-	chatConf.locale = locale
+	chatConf.Locale = locale
 	log.Printf("[DEBUG] Set locale %v for chatId %v", locale, chatId)
 	server.config.chatConfig[chatId] = chatConf
 
@@ -573,7 +585,7 @@ func (server Server) setLocale(chatId int64, locale string) {
 func (server Server) saveChatConfig(chatId int64) error {
 	chatConf := server.config.chatConfig[chatId]
 
-	chatConf.chatId = chatId
+	chatConf.ChatId = chatId
 
 	log.Printf("[DEBUG] Saving chat config to mongo for %s: %v", chatId, chatConf)
 
@@ -618,9 +630,9 @@ func (server Server) getChatLocale(chatId int64) (string, error) {
 		return "", err
 	}
 
-	log.Printf("[DEBUG] Found locale for chat %s: %s", chatId, result.locale)
+	log.Printf("[DEBUG] Found locale for chat %s: %s", chatId, result.Locale)
 
-	return result.locale, nil
+	return result.Locale, nil
 }
 
 func (server Server) mongoConnect() error {
@@ -644,7 +656,7 @@ func (server Server) mongoConnect() error {
 
 func (server Server) t(chatId int64, translationID string, args ...interface{}) string {
 	chatConf := server.config.chatConfig[chatId]
-	localeStr := chatConf.locale
+	localeStr := chatConf.Locale
 
 	if localeStr == "" {
 		log.Printf("[DEBUG] Trying to get locale from mongo for %s before setting default en",
