@@ -9,7 +9,7 @@ at later stages of the project.
 ## Architecture
 The project architecture looks like this:
 
-![project architecture](asset/architecture.jpg)
+![project architecture](asset/1_qTK1iCtyJUr4zOyw4IFD7A.jpeg)
 
 Basically, each worker lives in a separate subdirectory and has it's own README
 
